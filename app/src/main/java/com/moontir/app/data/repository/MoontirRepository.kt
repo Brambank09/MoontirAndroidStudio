@@ -201,8 +201,8 @@ class MoontirRepository(private val sessionManager: SessionManager) {
         if (surcharge > 0) {
             items.add(
                 InvoiceItem(
-                    label = "$vehicleType handling surcharge",
-                    labelId = "Biaya penanganan $vehicleType",
+                    label = "Tax and handling fees",
+                    labelId = "Pajak dan biaya penanganan",
                     amount = surcharge
                 )
             )

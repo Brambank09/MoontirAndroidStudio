@@ -207,7 +207,7 @@ def price_breakdown(service: dict, vehicle_type: str) -> dict:
     surcharge = total - base
     items: List[dict] = [{"label": service["name"], "label_id": service["name_id"], "amount": base}]
     if surcharge > 0:
-        items.append({"label": f"{vehicle_type} handling surcharge", "label_id": f"Biaya penanganan {vehicle_type}", "amount": surcharge})
+        items.append({"label": "Tax and handling fees", "label_id": "Pajak dan biaya penanganan", "amount": surcharge})
     return {"items": items, "total": total, "multiplier": multiplier, "vehicle_type": vehicle_type, "base": base, "surcharge": surcharge}
 
 

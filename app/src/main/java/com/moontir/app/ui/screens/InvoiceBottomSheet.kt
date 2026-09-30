@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -136,20 +137,23 @@ fun InvoiceBottomSheet(
                 }
             } else {
                 // Action buttons: Complete / Rate
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (!isCompleted) {
-                        OutlinedButton(
-                            onClick = { onCompleteOrder(order) },
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
-                            modifier = Modifier.weight(1f).height(42.dp)
-                        ) {
-                            Text(strings.markComplete, color = colors.onSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
+                if (!isCompleted) {
+                    val hasExceeded = hasExceededCompletionTime(order.scheduleDate, order.scheduleTime)
+                    val completeLabel = if (hasExceeded) strings.serviceCompleted else strings.completeNow
+                    Button(
+                        onClick = { onCompleteOrder(order) },
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.brand,
+                            contentColor = colors.onBrand
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = colors.onBrand, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(completeLabel, color = colors.onBrand, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
+                } else {
                     Button(
                         onClick = { onRateOrder(order) },
                         shape = RoundedCornerShape(20.dp),
@@ -157,7 +161,7 @@ fun InvoiceBottomSheet(
                             containerColor = colors.brand,
                             contentColor = colors.onBrand
                         ),
-                        modifier = Modifier.weight(1f).height(42.dp)
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
                     ) {
                         Icon(Icons.Outlined.Star, contentDescription = null, tint = colors.onBrand, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -204,7 +208,18 @@ fun InvoiceBottomSheet(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            val label = if (isIndonesian && !item.labelId.isNullOrBlank()) item.labelId else item.label
+                            val isSurchargeItem = item.label.contains("handling surcharge", ignoreCase = true) ||
+                                    item.label.equals("Tax and handling fees", ignoreCase = true) ||
+                                    item.labelId?.contains("Biaya penanganan", ignoreCase = true) == true ||
+                                    item.labelId?.contains("Pajak dan biaya", ignoreCase = true) == true
+
+                            val label = if (isSurchargeItem) {
+                                strings.taxAndHandling
+                            } else if (isIndonesian && !item.labelId.isNullOrBlank()) {
+                                item.labelId
+                            } else {
+                                item.label
+                            }
                             Text(label, color = colors.onSurfaceSecondary, fontSize = 12.sp)
                             Text(formatRupiah(item.amount), color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }

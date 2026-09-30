@@ -571,6 +571,8 @@ fun MoontirOrderCard(
     onClick: () -> Unit,
     onComplete: (() -> Unit)? = null,
     onRate: (() -> Unit)? = null,
+    completeButtonText: String? = null,
+    isExceeded: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val colors = MoontirTheme.colors
@@ -643,25 +645,42 @@ fun MoontirOrderCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-            } else if (onComplete != null || onRate != null) {
+            } else if ((!isCompleted && onComplete != null) || (isCompleted && onRate != null)) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (!isCompleted && onComplete != null) {
-                        OutlinedButton(
-                            onClick = onComplete,
-                            shape = RoundedCornerShape(18.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
-                            modifier = Modifier.weight(1f).height(38.dp)
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = colors.onSurface)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(strings.markComplete, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
+                        val btnLabel = completeButtonText ?: if (isExceeded) strings.serviceCompleted else strings.completeNow
+                        if (isExceeded) {
+                            Button(
+                                onClick = onComplete,
+                                shape = RoundedCornerShape(18.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = colors.brand,
+                                    contentColor = colors.onBrand
+                                ),
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = colors.onBrand)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(btnLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.onBrand)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = onComplete,
+                                shape = RoundedCornerShape(18.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = colors.onSurface)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(btnLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
+                            }
                         }
                     }
-                    if (onRate != null) {
+                    if (isCompleted && onRate != null) {
                         Button(
                             onClick = onRate,
                             shape = RoundedCornerShape(18.dp),

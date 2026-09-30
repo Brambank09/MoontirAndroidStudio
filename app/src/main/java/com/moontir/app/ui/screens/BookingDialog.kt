@@ -1240,7 +1240,19 @@ fun BookingDialog(
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Text(if (isIndonesian && !item.labelId.isNullOrBlank()) item.labelId else item.label, color = colors.onSurfaceSecondary, fontSize = 12.sp)
+                                                val isSurchargeItem = item.label.contains("handling surcharge", ignoreCase = true) ||
+                                                        item.label.equals("Tax and handling fees", ignoreCase = true) ||
+                                                        item.labelId?.contains("Biaya penanganan", ignoreCase = true) == true ||
+                                                        item.labelId?.contains("Pajak dan biaya", ignoreCase = true) == true
+
+                                                val label = if (isSurchargeItem) {
+                                                    strings.taxAndHandling
+                                                } else if (isIndonesian && !item.labelId.isNullOrBlank()) {
+                                                    item.labelId
+                                                } else {
+                                                    item.label
+                                                }
+                                                Text(label, color = colors.onSurfaceSecondary, fontSize = 12.sp)
                                                 Text(formatRupiah(item.amount), color = colors.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }

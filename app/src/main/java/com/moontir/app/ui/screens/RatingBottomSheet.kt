@@ -29,7 +29,7 @@ fun RatingBottomSheet(
     onDismiss: () -> Unit,
     onSubmitRating: (Order, Int, String) -> Unit
 ) {
-    if (order == null) return
+    if (order == null || order.status != "completed") return
 
     val colors = MoontirTheme.colors
     val strings = AppI18n.current

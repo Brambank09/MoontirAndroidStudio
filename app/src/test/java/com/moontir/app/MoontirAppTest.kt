@@ -150,8 +150,8 @@ class MoontirAppTest {
                         "amount": 275000
                     },
                     {
-                        "label": "MPV handling surcharge",
-                        "label_id": "Biaya penanganan MPV",
+                        "label": "Tax and handling fees",
+                        "label_id": "Pajak dan biaya penanganan",
                         "amount": 41500
                     }
                 ],
@@ -168,6 +168,8 @@ class MoontirAppTest {
         assertEquals("dispatch", order.status)
         assertEquals(316500L, order.total)
         assertEquals(2, order.items.size)
+        assertEquals("Tax and handling fees", order.items[1].label)
+        assertEquals("Pajak dan biaya penanganan", order.items[1].labelId)
         assertEquals("unpaid", order.paymentStatus)
     }
 
@@ -187,6 +189,13 @@ class MoontirAppTest {
 
         assertEquals("App Version", en.appVersion)
         assertEquals("Versi Aplikasi", id.appVersion)
+
+        assertEquals("Complete now", en.completeNow)
+        assertEquals("Selesaikan sekarang", id.completeNow)
+        assertEquals("Service completed", en.serviceCompleted)
+        assertEquals("Servis selesai", id.serviceCompleted)
+        assertEquals("Tax and handling fees", en.taxAndHandling)
+        assertEquals("Pajak dan biaya penanganan", id.taxAndHandling)
     }
 
     @Test
@@ -236,5 +245,61 @@ class MoontirAppTest {
         val towMins = 45
         val jumpMins = 30
         assertEquals(75, towMins + jumpMins)
+    }
+
+    @Test
+    fun testOrdersCompletionTimeAndRatingEligibility() {
+        val testDate = "2026-09-30"
+
+        // 1. Standard booking: 09:30 – 11:15 (1h 45m)
+        val standardSlot = "09:30 – 11:15 (1h 45m)"
+
+        // Case A: Before completion (10:30 AM)
+        val calBefore = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 10, 30, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val exceededBefore = com.moontir.app.ui.screens.hasExceededCompletionTime(testDate, standardSlot, calBefore)
+        assertFalse(exceededBefore) // Should show "Complete now"
+
+        // Case B: At completion time (11:15 AM)
+        val calAt = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 11, 15, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val exceededAt = com.moontir.app.ui.screens.hasExceededCompletionTime(testDate, standardSlot, calAt)
+        assertTrue(exceededAt) // Should show "Service completed"
+
+        // Case C: After completion time (12:00 PM)
+        val calAfter = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 12, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val exceededAfter = com.moontir.app.ui.screens.hasExceededCompletionTime(testDate, standardSlot, calAfter)
+        assertTrue(exceededAfter) // Should show "Service completed"
+
+        // 2. Emergency booking: Immediate 24/7 (Est. completion ~15:05)
+        val emergencySlot = "Immediate 24/7 (Est. completion ~15:05)"
+
+        // Case A: Before completion (14:45)
+        val calEmergBefore = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 14, 45, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        assertFalse(com.moontir.app.ui.screens.hasExceededCompletionTime(testDate, emergencySlot, calEmergBefore))
+
+        // Case B: After completion (15:10)
+        val calEmergAfter = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 15, 10, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        assertTrue(com.moontir.app.ui.screens.hasExceededCompletionTime(testDate, emergencySlot, calEmergAfter))
+
+        // 3. Past date booking: e.g. 2026-09-25
+        val calToday = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.SEPTEMBER, 30, 8, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        assertTrue(com.moontir.app.ui.screens.hasExceededCompletionTime("2026-09-25", "09:00 - 11:00", calToday))
     }
 }

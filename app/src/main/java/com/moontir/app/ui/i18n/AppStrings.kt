@@ -136,7 +136,10 @@ data class Strings(
     val chooseStartTime: String,
     val startTime: String,
     val estCompletion: String,
-    val totalDuration: String
+    val totalDuration: String,
+    val completeNow: String,
+    val serviceCompleted: String,
+    val taxAndHandling: String
 )
 
 val EnStrings = Strings(
@@ -271,7 +274,10 @@ val EnStrings = Strings(
     chooseStartTime = "CHOOSE START TIME (09:00 AM – 04:00 PM)",
     startTime = "Start time",
     estCompletion = "Estimated completion",
-    totalDuration = "Total duration"
+    totalDuration = "Total duration",
+    completeNow = "Complete now",
+    serviceCompleted = "Service completed",
+    taxAndHandling = "Tax and handling fees"
 )
 
 val IdStrings = Strings(
@@ -406,7 +412,10 @@ val IdStrings = Strings(
     chooseStartTime = "PILIH JAM MULAI (09:00 – 16:00)",
     startTime = "Jam mulai",
     estCompletion = "Estimasi selesai",
-    totalDuration = "Total durasi"
+    totalDuration = "Total durasi",
+    completeNow = "Selesaikan sekarang",
+    serviceCompleted = "Servis selesai",
+    taxAndHandling = "Pajak dan biaya penanganan"
 )
 
 fun getAppStrings(lang: String): Strings = if (lang == "id") IdStrings else EnStrings

@@ -20,7 +20,6 @@ const VEHICLE_TYPES = ["Sedan", "Hatchback", "MPV", "SUV", "Pickup", "Truck"] as
 const money = (v: number) => `Rp ${v.toLocaleString("id-ID")}`;
 const slots = ["09:00 – 11:00", "11:30 – 13:30", "14:00 – 16:00", "16:30 – 18:30"];
 const nextDates = Array.from({ length: 5 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() + i + 1); return { value: d.toISOString().slice(0, 10), day: d.toLocaleDateString("en-US", { weekday: "short" }), idDay: d.toLocaleDateString("id-ID", { weekday: "short" }), number: d.getDate() }; });
-const HERO_IMG = "https://images.unsplash.com/photo-1601362840469-51e4d8d58785?w=800&q=70&auto=format";
 
 // A dispatch order is treated as "delivered" when its schedule date is today or earlier.
 // The customer can then mark it completed and rate the specialist.
@@ -287,7 +286,7 @@ function Home({ user, services, orders, t, lang, book, select, goServicesFiltere
             <Text style={styles.heroBtnText}>{t.shopNow}</Text>
           </Pressable>
         </View>
-        <Image source={{ uri: HERO_IMG }} style={styles.heroImg} resizeMode="cover" />
+        <Image source={require("../assets/images/hero_mechanic.jpg")} style={styles.heroImg} resizeMode="cover" />
       </View>
 
       {active && (

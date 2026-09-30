@@ -189,7 +189,7 @@ class MainActivity : ComponentActivity() {
                                                         orders = orders,
                                                         onOpenInvoice = { viewModel.orderForInvoice.value = it },
                                                         onCompleteOrder = { viewModel.completeOrder(it) },
-                                                        onRateOrder = { viewModel.orderForRating.value = it }
+                                                        onRateOrder = { if (it.status == "completed") viewModel.orderForRating.value = it }
                                                     )
                                                 }
 
@@ -265,7 +265,7 @@ class MainActivity : ComponentActivity() {
                                 isIndonesian = language == "id",
                                 onDismiss = { viewModel.orderForInvoice.value = null },
                                 onCompleteOrder = { viewModel.completeOrder(it) },
-                                onRateOrder = { viewModel.orderForRating.value = it }
+                                onRateOrder = { if (it.status == "completed") viewModel.orderForRating.value = it }
                             )
 
                             RatingBottomSheet(

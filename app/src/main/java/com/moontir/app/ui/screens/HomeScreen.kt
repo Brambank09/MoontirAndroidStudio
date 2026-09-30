@@ -1,5 +1,6 @@
 package com.moontir.app.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -25,10 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import com.moontir.app.R
 import com.moontir.app.data.model.Order
 import com.moontir.app.data.model.Service
 import com.moontir.app.data.model.User
@@ -37,8 +39,6 @@ import com.moontir.app.ui.components.MoontirOrderCard
 import com.moontir.app.ui.components.MoontirServiceCard
 import com.moontir.app.ui.i18n.AppI18n
 import com.moontir.app.ui.theme.MoontirTheme
-
-private const val HERO_IMG = "https://images.unsplash.com/photo-1601362840469-51e4d8d58785?w=800&q=70&auto=format"
 
 @Composable
 fun HomeScreen(
@@ -142,8 +142,8 @@ fun HomeScreen(
                         }
                     }
 
-                    AsyncImage(
-                        model = HERO_IMG,
+                    Image(
+                        painter = painterResource(id = R.drawable.hero_mechanic),
                         contentDescription = "Car care",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
