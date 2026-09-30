@@ -526,7 +526,7 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 descriptionId = "Layanan derek gendong darurat 24/7 ke bengkel pilihan atau rumah dengan aman.",
                 duration = "30–45 mins arrival",
                 durationId = "30–45 mnt tiba",
-                price = 350000,
+                price = 400000,
                 featured = true,
                 features = listOf("24/7 rapid dispatch", "Flatbed towing", "Up to 15 km included", "Safe harness locking")
             ),
