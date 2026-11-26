@@ -3,11 +3,11 @@ package com.moontir.app.ui.screens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,11 +61,12 @@ fun ServicesScreen(
 
     val grouped = filteredServices.groupBy { it.group }
 
+    val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 104.dp + navBarBottom),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
@@ -113,28 +114,70 @@ fun ServicesScreen(
             )
         }
 
-        // Filter Chips Row
+        // All Category Filters (non-scrolling FlowRow, with distinct "ALL" reset button)
         item {
-            LazyRow(
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 4.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filterGroups) { (key, label) ->
+                filterGroups.forEach { (key, label) ->
                     val isSelected = selectedFilter == key
+                    val isAllButton = key == "all"
+
+                    val chipShape = if (isAllButton) RoundedCornerShape(10.dp) else RoundedCornerShape(20.dp)
+                    val chipBg = when {
+                        isAllButton && isSelected -> colors.onSurface
+                        isAllButton -> colors.surfaceSecondary
+                        isSelected -> colors.brand
+                        else -> colors.surfaceTertiary
+                    }
+                    val chipBorder = when {
+                        isAllButton && isSelected -> colors.onSurface
+                        isAllButton -> colors.borderStrong
+                        isSelected -> colors.brand
+                        else -> colors.border
+                    }
+                    val chipTextColor = when {
+                        isAllButton && isSelected -> colors.surface
+                        isAllButton -> colors.onSurface
+                        isSelected -> colors.onBrand
+                        else -> colors.onSurface
+                    }
+
                     Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) colors.brand else colors.surfaceTertiary,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) colors.brand else colors.border),
+                        shape = chipShape,
+                        color = chipBg,
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (isAllButton) 1.5.dp else 1.dp,
+                            color = chipBorder
+                        ),
                         modifier = Modifier.clickable { selectedFilter = key }
                     ) {
-                        Text(
-                            text = label,
-                            color = if (isSelected) colors.onBrand else colors.onSurface,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 1.sp,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(
+                                horizontal = if (isAllButton) 16.dp else 12.dp,
+                                vertical = if (isAllButton) 9.dp else 8.dp
+                            )
+                        ) {
+                            if (isAllButton) {
+                                Icon(
+                                    imageVector = Icons.Outlined.GridView,
+                                    contentDescription = null,
+                                    tint = chipTextColor,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Text(
+                                text = label,
+                                color = chipTextColor,
+                                fontSize = if (isAllButton) 11.sp else 10.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.sp
+                            )
+                        }
                     }
                 }
             }

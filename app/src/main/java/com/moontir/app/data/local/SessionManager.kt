@@ -6,6 +6,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.moontir.app.BuildConfig
 import com.moontir.app.data.model.Order
+import com.moontir.app.data.model.SavedCard
 import com.moontir.app.data.model.User
 import com.moontir.app.data.model.Vehicle
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +36,9 @@ class SessionManager(context: Context) {
     // Default to true so all features run standalone without requiring a local backend server
     private val _isMockModeFlow = MutableStateFlow(prefs.getBoolean(KEY_MOCK_MODE, true))
     val isMockModeFlow: StateFlow<Boolean> = _isMockModeFlow.asStateFlow()
+
+    private val _savedCardFlow = MutableStateFlow(getSavedCard())
+    val savedCardFlow: StateFlow<SavedCard?> = _savedCardFlow.asStateFlow()
 
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)
 
@@ -113,18 +117,18 @@ class SessionManager(context: Context) {
                 nickname = "Family Innova",
                 make = "Toyota",
                 model = "Innova Reborn",
-                year = "2023",
-                plate = "B 1234 MON",
+                year = "2025",
+                plate = "H 6767 MON",
                 type = "MPV",
                 createdAt = "2026-09-28T00:00:00Z"
             ),
             Vehicle(
                 id = "veh-2",
-                nickname = "Daily Civic",
-                make = "Honda",
-                model = "Civic RS",
-                year = "2022",
-                plate = "B 5678 LNR",
+                nickname = "Daily Driver",
+                make = "Nissan",
+                model = "Fairlady Z",
+                year = "2023",
+                plate = "H 420 BIM",
                 type = "Sedan",
                 createdAt = "2026-09-28T00:00:00Z"
             )
@@ -156,6 +160,27 @@ class SessionManager(context: Context) {
         prefs.edit().putString(KEY_LOCAL_ORDERS, gson.toJson(orders)).apply()
     }
 
+    // Saved Debit / Credit Card Identity Persistence
+    fun getSavedCard(): SavedCard? {
+        val json = prefs.getString(KEY_SAVED_CARD, null) ?: return null
+        return try {
+            val card = gson.fromJson(json, SavedCard::class.java)
+            if (card != null && card.cardNumber.isNotBlank()) card else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun saveCard(card: SavedCard) {
+        prefs.edit().putString(KEY_SAVED_CARD, gson.toJson(card)).apply()
+        _savedCardFlow.value = card
+    }
+
+    fun clearSavedCard() {
+        prefs.edit().remove(KEY_SAVED_CARD).apply()
+        _savedCardFlow.value = null
+    }
+
     companion object {
         private const val KEY_TOKEN = "auth_token"
         private const val KEY_USER = "auth_user"
@@ -165,5 +190,6 @@ class SessionManager(context: Context) {
         private const val KEY_MOCK_MODE = "is_mock_mode"
         private const val KEY_LOCAL_VEHICLES = "local_vehicles_data"
         private const val KEY_LOCAL_ORDERS = "local_orders_data"
+        private const val KEY_SAVED_CARD = "saved_payment_card"
     }
 }

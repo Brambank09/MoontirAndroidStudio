@@ -21,6 +21,7 @@ import com.moontir.app.ui.i18n.getAppStrings
 import com.moontir.app.ui.screens.*
 import com.moontir.app.ui.theme.MoontirAppTheme
 import com.moontir.app.ui.theme.MoontirTheme
+import com.moontir.app.ui.theme.rememberAmbientLightState
 import com.moontir.app.ui.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
             val themeMode by viewModel.themeMode.collectAsState()
             val baseUrl by viewModel.baseUrl.collectAsState()
             val isMockMode by viewModel.isMockMode.collectAsState()
+            val savedCard by viewModel.savedCard.collectAsState()
 
             val services by viewModel.services.collectAsState()
             val vehicles by viewModel.vehicles.collectAsState()
@@ -67,27 +69,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            CompositionLocalProvider(LocalStrings provides strings) {
-                MoontirAppTheme(themeMode = themeMode) {
-                    val colors = MoontirTheme.colors
+            val ambientLight = rememberAmbientLightState(enabled = themeMode == "auto")
 
-                    Scaffold(
-                        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                        containerColor = colors.surface,
-                        bottomBar = {
-                            if (token != null && user != null && !isLoading) {
-                                MoontirBottomBar(
-                                    currentScreen = currentScreen,
-                                    onNavigate = { viewModel.setScreen(it) }
-                                )
-                            }
-                        }
-                    ) { innerPadding ->
+            CompositionLocalProvider(LocalStrings provides strings) {
+                MoontirAppTheme(
+                    themeMode = themeMode,
+                    ambientIsDark = ambientLight.isDark
+                ) {
+                    val colors = MoontirTheme.colors
+                    val showFloatingNav = token != null && user != null && !isLoading
+                    val activeOrderCount = orders.count { it.status != "completed" }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(colors.surface)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(colors.surface)
-                                .padding(innerPadding)
+                                .statusBarsPadding()
                         ) {
                             when {
                                 isLoading -> {
@@ -123,15 +124,9 @@ class MainActivity : ComponentActivity() {
 
                                 else -> {
                                     val currentUser = user!!
-                                    val activeCount = orders.count { it.status != "completed" }
 
                                     Column(modifier = Modifier.fillMaxSize()) {
-                                        MoontirTopBar(
-                                            activeOrderCount = activeCount,
-                                            currentLanguage = language,
-                                            onToggleLanguage = { viewModel.toggleLanguage() },
-                                            onOrdersClick = { viewModel.setScreen("orders") }
-                                        )
+                                        MoontirTopBar()
 
                                         Box(modifier = Modifier.weight(1f)) {
                                             when (currentScreen) {
@@ -197,15 +192,21 @@ class MainActivity : ComponentActivity() {
                                                     ProfileScreen(
                                                         user = currentUser,
                                                         themeMode = themeMode,
+                                                        ambientLight = ambientLight,
                                                         currentLanguage = language,
                                                         baseUrl = baseUrl,
                                                         isMockMode = isMockMode,
+                                                        savedCard = savedCard,
                                                         busy = isBusy,
                                                         onUpdateName = { viewModel.updateProfile(it) },
-                                                        onCycleTheme = { viewModel.cycleTheme() },
+                                                        onSelectTheme = { viewModel.setThemeMode(it) },
                                                         onToggleLanguage = { viewModel.toggleLanguage() },
                                                         onUpdateBaseUrl = { viewModel.updateBaseUrl(it) },
                                                         onToggleMockMode = { viewModel.toggleMockMode(it) },
+                                                        onSaveCard = { num, holder, exp, cvv ->
+                                                            viewModel.savePaymentCard(num, holder, exp, cvv)
+                                                        },
+                                                        onClearCard = { viewModel.clearPaymentCard() },
                                                         onLogout = { viewModel.logout() }
                                                     )
                                                 }
@@ -214,76 +215,107 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                        }
 
-                            // Modals & Bottom Sheets
-                            BookingDialog(
-                                isOpen = isBookingOpen,
-                                initialService = preselectedService,
-                                services = services,
-                                vehicles = vehicles,
-                                isIndonesian = language == "id",
-                                busy = isBusy,
-                                errorMessage = errorMessage,
-                                onDismiss = {
-                                    viewModel.isBookingOpen.value = false
-                                    viewModel.preselectedService.value = null
-                                    viewModel.clearError()
-                                },
-                                onAddVehicle = {
-                                    viewModel.vehicleToEdit.value = null
-                                    viewModel.isAddVehicleOpen.value = true
-                                },
-                                onGetQuote = { sId, vType -> viewModel.getQuote(sId, vType) },
-                                onGetMultiQuote = { sIds, vType -> viewModel.getQuoteForServices(sIds, vType) },
-                                onSearchAddress = { q -> viewModel.searchAddress(q) },
-                                onReverseGeocode = { lat, lon -> viewModel.reverseGeocode(lat, lon) },
-                                onConfirmOrder = { serviceId, vehicleId, address, date, time, note ->
-                                    viewModel.createOrder(serviceId, vehicleId, address, date, time, note) {
-                                        viewModel.isBookingOpen.value = false
-                                        viewModel.preselectedService.value = null
-                                    }
-                                }
-                            )
-
-                            VehicleBottomSheet(
-                                isOpen = isAddVehicleOpen,
-                                vehicleToEdit = vehicleToEdit,
-                                busy = isBusy,
-                                errorMessage = errorMessage,
-                                onDismiss = {
-                                    viewModel.isAddVehicleOpen.value = false
-                                    viewModel.vehicleToEdit.value = null
-                                    viewModel.clearError()
-                                },
-                                onSave = { nickname, make, model, year, plate, type, editId ->
-                                    viewModel.saveVehicle(nickname, make, model, year, plate, type, editId)
-                                }
-                            )
-
-                            InvoiceBottomSheet(
-                                order = orderForInvoice,
-                                isIndonesian = language == "id",
-                                onDismiss = { viewModel.orderForInvoice.value = null },
-                                onCompleteOrder = { viewModel.completeOrder(it) },
-                                onRateOrder = { if (it.status == "completed") viewModel.orderForRating.value = it }
-                            )
-
-                            RatingBottomSheet(
-                                order = orderForRating,
-                                busy = isBusy,
-                                onDismiss = { viewModel.orderForRating.value = null },
-                                onSubmitRating = { order, stars, note ->
-                                    viewModel.submitRating(order, stars, note)
-                                }
-                            )
-
-                            ConfirmDeleteDialog(
-                                vehicle = vehicleToDelete,
-                                busy = isBusy,
-                                onDismiss = { viewModel.vehicleToDelete.value = null },
-                                onConfirm = { viewModel.deleteVehicle(it) }
+                        // Floating Pill Bottom Navigation Dock
+                        if (showFloatingNav) {
+                            MoontirBottomBar(
+                                currentScreen = currentScreen,
+                                onNavigate = { viewModel.setScreen(it) },
+                                activeOrderCount = activeOrderCount,
+                                userInitial = user?.name?.firstOrNull()?.toString(),
+                                modifier = Modifier.align(Alignment.BottomCenter)
                             )
                         }
+
+                        // Snackbar positioned cleanly above floating navbar
+                        SnackbarHost(
+                            hostState = snackbarHostState,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .navigationBarsPadding()
+                                .padding(bottom = if (showFloatingNav) 86.dp else 16.dp)
+                        )
+
+                        // Modals & Bottom Sheets
+                        BookingDialog(
+                            isOpen = isBookingOpen,
+                            initialService = preselectedService,
+                            services = services,
+                            vehicles = vehicles,
+                            savedCard = savedCard,
+                            isIndonesian = language == "id",
+                            busy = isBusy,
+                            errorMessage = errorMessage,
+                            onDismiss = {
+                                viewModel.isBookingOpen.value = false
+                                viewModel.preselectedService.value = null
+                                viewModel.clearError()
+                            },
+                            onAddVehicle = {
+                                viewModel.vehicleToEdit.value = null
+                                viewModel.isAddVehicleOpen.value = true
+                            },
+                            onGetQuote = { sId, vType -> viewModel.getQuote(sId, vType) },
+                            onGetMultiQuote = { sIds, vType -> viewModel.getQuoteForServices(sIds, vType) },
+                            onSearchAddress = { q -> viewModel.searchAddress(q) },
+                            onReverseGeocode = { lat, lon -> viewModel.reverseGeocode(lat, lon) },
+                            onConfirmOrder = { serviceId, vehicleId, address, date, time, note, paymentMethod, paymentStatus, paymentRef ->
+                                viewModel.createOrder(
+                                    serviceId = serviceId,
+                                    vehicleId = vehicleId,
+                                    address = address,
+                                    date = date,
+                                    time = time,
+                                    notes = note,
+                                    paymentMethod = paymentMethod,
+                                    paymentStatus = paymentStatus,
+                                    paymentReference = paymentRef
+                                ) {
+                                    viewModel.isBookingOpen.value = false
+                                    viewModel.preselectedService.value = null
+                                }
+                            }
+                        )
+
+                        VehicleBottomSheet(
+                            isOpen = isAddVehicleOpen,
+                            vehicleToEdit = vehicleToEdit,
+                            busy = isBusy,
+                            errorMessage = errorMessage,
+                            onDismiss = {
+                                viewModel.isAddVehicleOpen.value = false
+                                viewModel.vehicleToEdit.value = null
+                                viewModel.clearError()
+                            },
+                            onSave = { nickname, make, model, year, plate, type, editId ->
+                                viewModel.saveVehicle(nickname, make, model, year, plate, type, editId)
+                            }
+                        )
+
+                        InvoiceBottomSheet(
+                            order = orderForInvoice,
+                            isIndonesian = language == "id",
+                            onDismiss = { viewModel.orderForInvoice.value = null },
+                            onCompleteOrder = { viewModel.completeOrder(it) },
+                            onRateOrder = { if (it.status == "completed") viewModel.orderForRating.value = it }
+                        )
+
+                        RatingBottomSheet(
+                            order = orderForRating,
+                            busy = isBusy,
+                            onDismiss = { viewModel.orderForRating.value = null },
+                            onSubmitRating = { order, stars, note ->
+                                viewModel.submitRating(order, stars, note)
+                            }
+                        )
+
+                        ConfirmDeleteDialog(
+                            vehicle = vehicleToDelete,
+                            busy = isBusy,
+                            onDismiss = { viewModel.vehicleToDelete.value = null },
+                            onConfirm = { viewModel.deleteVehicle(it) }
+                        )
                     }
                 }
             }

@@ -39,6 +39,7 @@ import com.moontir.app.ui.components.MoontirOrderCard
 import com.moontir.app.ui.components.MoontirServiceCard
 import com.moontir.app.ui.i18n.AppI18n
 import com.moontir.app.ui.theme.MoontirTheme
+import com.moontir.app.ui.theme.SubtleEmergencyRed
 
 @Composable
 fun HomeScreen(
@@ -62,11 +63,12 @@ fun HomeScreen(
     }
     val recentOrders = orders.take(2)
 
+    val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 104.dp + navBarBottom),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Welcome Header
@@ -259,12 +261,12 @@ fun HomeScreen(
             }
         }
 
-        // Emergency Service Banner (Replaces Discover More spotlight tile)
+        // Emergency Service Banner (Unified with Moontir palette; subtle muted red icon accent only)
         item {
             Surface(
                 shape = RoundedCornerShape(18.dp),
-                color = Color(0xFF1E1214),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFEF4444)),
+                color = colors.surfaceSecondary,
+                border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onNavigateServices("emergency") }
@@ -279,29 +281,29 @@ fun HomeScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFEF4444).copy(alpha = 0.2f)),
+                                .background(SubtleEmergencyRed.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.WarningAmber,
                                 contentDescription = null,
-                                tint = Color(0xFFEF4444),
-                                modifier = Modifier.size(24.dp)
+                                tint = SubtleEmergencyRed,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = strings.emergencyBannerTag,
-                                color = Color(0xFFEF4444),
+                                color = colors.moonGlow,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Black,
-                                letterSpacing = 1.2.sp
+                                letterSpacing = 1.4.sp
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = strings.emergencyBannerTitle,
-                                color = Color.White,
+                                color = colors.onSurface,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Black
                             )
@@ -309,7 +311,7 @@ fun HomeScreen(
                         Icon(
                             imageVector = Icons.Outlined.ChevronRight,
                             contentDescription = null,
-                            tint = Color(0xFFEF4444),
+                            tint = colors.onSurfaceSecondary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -317,14 +319,14 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = strings.emergencyBannerSub,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = colors.onSurfaceSecondary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = strings.emergencyBannerPrice,
-                        color = Color(0xFFFCA5A5),
+                        color = colors.moonGlow,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -332,16 +334,19 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(14.dp))
                     Button(
                         onClick = { onNavigateServices("emergency") },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.brand,
+                            contentColor = colors.onBrand
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             text = strings.emergencyBannerAction,
-                            color = Color.White,
-                            fontSize = 12.sp,
+                            color = colors.onBrand,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Black,
-                            letterSpacing = 1.sp
+                            letterSpacing = 1.1.sp
                         )
                     }
                 }

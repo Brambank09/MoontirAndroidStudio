@@ -11,16 +11,20 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.moontir.app.ui.theme.MoontirTheme
@@ -38,20 +42,24 @@ private class MapBridge(private val onPick: (Double, Double) -> Unit) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun LeafletMapView(
     latitude: Double?,
     longitude: Double?,
     onPickPin: (Double, Double) -> Unit,
     modifier: Modifier = Modifier,
-    heightDp: Int = 240
+    heightDp: Int? = 240,
+    interactive: Boolean = true,
+    onPreviewClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isLight = MaterialTheme.colorScheme.background.red > 0.5f
 
     val lat = latitude ?: -6.9932
     val lon = longitude ?: 110.4203
+    val latestLat by rememberUpdatedState(lat)
+    val latestLon by rememberUpdatedState(lon)
 
     val bgColor = if (isLight) "#EBF0D5" else "#26221F"
     val pinColor = if (isLight) "#403A35" else "#D8E2AE"
@@ -78,7 +86,7 @@ fun LeafletMapView(
         }
     }
 
-    val initialHtml = remember(isLight) {
+    val initialHtml = remember(isLight, interactive) {
         val cssTag = if (leafletCss.isNotBlank()) {
             "<style>$leafletCss</style>"
         } else {
@@ -128,7 +136,14 @@ fun LeafletMapView(
         <script>
             var map = L.map('map', {
                 zoomControl: false,
-                attributionControl: true
+                attributionControl: true,
+                dragging: $interactive,
+                touchZoom: $interactive,
+                scrollWheelZoom: $interactive,
+                doubleClickZoom: $interactive,
+                boxZoom: $interactive,
+                keyboard: $interactive,
+                tap: $interactive
             }).setView([$lat, $lon], 15);
 
             var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -153,28 +168,30 @@ fun LeafletMapView(
             osmLayer.addTo(map);
 
             var pinIcon = L.divIcon({ className: 'moon-pin', iconSize: [24, 24] });
-            var marker = L.marker([$lat, $lon], { draggable: true, icon: pinIcon }).addTo(map);
+            var marker = L.marker([$lat, $lon], { draggable: $interactive, icon: pinIcon }).addTo(map);
 
-            marker.on('dragend', function(e) {
-                var p = e.target.getLatLng();
-                if (window.AndroidBridge && window.AndroidBridge.onPick) {
-                    window.AndroidBridge.onPick(p.lat, p.lng);
-                }
-            });
+            if ($interactive) {
+                marker.on('dragend', function(e) {
+                    var p = e.target.getLatLng();
+                    if (window.AndroidBridge && window.AndroidBridge.onPick) {
+                        window.AndroidBridge.onPick(p.lat, p.lng);
+                    }
+                });
 
-            map.on('click', function(e) {
-                marker.setLatLng(e.latlng);
-                if (window.AndroidBridge && window.AndroidBridge.onPick) {
-                    window.AndroidBridge.onPick(e.latlng.lat, e.latlng.lng);
-                }
-            });
+                map.on('click', function(e) {
+                    marker.setLatLng(e.latlng);
+                    if (window.AndroidBridge && window.AndroidBridge.onPick) {
+                        window.AndroidBridge.onPick(e.latlng.lat, e.latlng.lng);
+                    }
+                });
+            }
 
             window.updatePin = function(newLat, newLon) {
                 if (window.map && window.marker) {
                     var current = window.marker.getLatLng();
-                    if (Math.abs(current.lat - newLat) > 0.00001 || Math.abs(current.lng - newLon) > 0.00001) {
+                    if (Math.abs(current.lat - newLat) > 0.000005 || Math.abs(current.lng - newLon) > 0.000005) {
                         marker.setLatLng([newLat, newLon]);
-                        window.map.panTo([newLat, newLon], { animate: true, duration: 0.4 });
+                        window.map.setView([newLat, newLon], Math.max(window.map.getZoom(), 16), { animate: $interactive });
                     }
                 }
             };
@@ -187,7 +204,7 @@ fun LeafletMapView(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(heightDp.dp)
+            .then(if (heightDp != null) Modifier.height(heightDp.dp) else Modifier)
             .clip(RoundedCornerShape(16.dp))
             .border(1.dp, MoontirTheme.colors.borderStrong, RoundedCornerShape(16.dp))
             .background(MoontirTheme.colors.surfaceTertiary)
@@ -199,13 +216,33 @@ fun LeafletMapView(
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    if (interactive) {
+                        setOnTouchListener { view, _ ->
+                            view.parent?.requestDisallowInterceptTouchEvent(true)
+                            false
+                        }
+                    } else {
+                        isClickable = false
+                        isFocusable = false
+                        setOnTouchListener { _, _ -> false }
+                    }
                     setBackgroundColor(AndroidColor.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.cacheMode = WebSettings.LOAD_DEFAULT
                     settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 MoontirApp/1.0"
                     settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            try {
+                                view?.evaluateJavascript(
+                                    "if (window.updatePin) { window.updatePin($latestLat, $latestLon); }",
+                                    null
+                                )
+                            } catch (_: Throwable) {}
+                        }
+                    }
                     webChromeClient = WebChromeClient()
                     addJavascriptInterface(MapBridge(onPickPin), "AndroidBridge")
                     loadDataWithBaseURL("https://tile.openstreetmap.org/", initialHtml, "text/html", "UTF-8", null)
@@ -235,5 +272,12 @@ fun LeafletMapView(
             },
             modifier = Modifier.matchParentSize()
         )
+        if (!interactive && onPreviewClick != null) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable(role = Role.Button) { onPreviewClick() }
+            )
+        }
     }
 }

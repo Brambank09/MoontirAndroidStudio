@@ -302,4 +302,110 @@ class MoontirAppTest {
         }
         assertTrue(com.moontir.app.ui.screens.hasExceededCompletionTime("2026-09-25", "09:00 - 11:00", calToday))
     }
+
+    @Test
+    fun testAmbientLightSensorThemeHysteresis() {
+        // Dim light (< 20 lux) switches to dark mode
+        assertTrue(com.moontir.app.ui.theme.resolveAmbientDarkTheme(5f, currentlyDark = false))
+        assertTrue(com.moontir.app.ui.theme.resolveAmbientDarkTheme(19.9f, currentlyDark = false))
+
+        // Bright light (> 35 lux) switches to light mode
+        assertFalse(com.moontir.app.ui.theme.resolveAmbientDarkTheme(36f, currentlyDark = true))
+        assertFalse(com.moontir.app.ui.theme.resolveAmbientDarkTheme(400f, currentlyDark = true))
+
+        // Hysteresis band (20..35 lux) preserves existing state to prevent flickering
+        assertTrue(com.moontir.app.ui.theme.resolveAmbientDarkTheme(28f, currentlyDark = true))
+        assertFalse(com.moontir.app.ui.theme.resolveAmbientDarkTheme(28f, currentlyDark = false))
+
+        // Initial reading with no prior state uses 25 lux midpoint
+        assertTrue(com.moontir.app.ui.theme.resolveAmbientDarkTheme(22f, currentlyDark = null))
+        assertFalse(com.moontir.app.ui.theme.resolveAmbientDarkTheme(28f, currentlyDark = null))
+    }
+
+    @Test
+    fun testPaymentSimulationFormattingValidationAndQr() {
+        assertEquals("4242 4242 4242 4242", com.moontir.app.ui.screens.formatCardNumber("4242424242424242999"))
+        assertEquals("12/28", com.moontir.app.ui.screens.formatCardExpiry("12289"))
+        assertEquals("05", com.moontir.app.ui.screens.formatCardExpiry("05"))
+
+        // Valid card input
+        assertNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput(
+                cardNumber = "4242 4242 4242 4242",
+                cardHolder = "Demo Cardholder",
+                expiry = "12/28",
+                cvv = "123",
+                isIndonesian = false
+            )
+        )
+
+        // Invalid cases
+        assertNotNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput("4242 4242", "Demo", "12/28", "123", false)
+        )
+        assertNotNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput("4242 4242 4242 4242", "", "12/28", "123", true)
+        )
+        assertNotNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput("4242 4242 4242 4242", "Demo", "13/28", "123", false)
+        )
+        assertNotNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput("4242 4242 4242 4242", "Demo", "12/28", "12", false)
+        )
+
+        // Deterministic QRIS matrix
+        val qr1 = com.moontir.app.ui.screens.generateDeterministicQrMatrix("MOONTIR-QRIS|MTR-QRIS-ABC123|290000")
+        val qr2 = com.moontir.app.ui.screens.generateDeterministicQrMatrix("MOONTIR-QRIS|MTR-QRIS-ABC123|290000")
+        assertEquals(25, qr1.size)
+        assertEquals(25, qr1[0].size)
+        // Finder square corners
+        assertTrue(qr1[0][0])
+        assertTrue(qr1[0][24])
+        assertTrue(qr1[24][0])
+        // Deterministic match
+        for (r in qr1.indices) {
+            assertArrayEquals(qr1[r], qr2[r])
+        }
+
+        // Bilingual strings check
+        val en = getAppStrings("en")
+        val id = getAppStrings("id")
+        assertEquals("Auto (Light Sensor)", en.themeAuto)
+        assertEquals("Auto (Sensor Cahaya)", id.themeAuto)
+        assertEquals("Pay after service", en.payAfterService)
+        assertEquals("Bayar setelah servis", id.payAfterService)
+        assertEquals("Debit / Credit Card", en.cardPayment)
+        assertEquals("Kartu Debit / Kredit", id.cardPayment)
+        assertEquals("QRIS", en.qrisPayment)
+        assertEquals("QRIS", id.qrisPayment)
+        assertEquals("Pin Service Location", en.mapPickerTitle)
+        assertEquals("Pin Point Lokasi Servis", id.mapPickerTitle)
+        assertEquals("Debit / Credit Card", en.savedCardSetting)
+        assertEquals("Kartu Debit / Kredit", id.savedCardSetting)
+    }
+
+    @Test
+    fun testSavedCardSerializationAndAutofillModel() {
+        val original = SavedCard(
+            cardNumber = "4242 4242 4242 4242",
+            cardHolder = "Budi Santoso",
+            expiry = "12/28",
+            cvv = "321"
+        )
+        val json = gson.toJson(original)
+        val restored = gson.fromJson(json, SavedCard::class.java)
+        assertEquals(original.cardNumber, restored.cardNumber)
+        assertEquals(original.cardHolder, restored.cardHolder)
+        assertEquals(original.expiry, restored.expiry)
+        assertEquals(original.cvv, restored.cvv)
+        assertNull(
+            com.moontir.app.ui.screens.validateCardPaymentInput(
+                cardNumber = restored.cardNumber,
+                cardHolder = restored.cardHolder,
+                expiry = restored.expiry,
+                cvv = restored.cvv,
+                isIndonesian = true
+            )
+        )
+    }
 }

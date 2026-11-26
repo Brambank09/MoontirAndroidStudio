@@ -104,11 +104,12 @@ fun OrdersScreen(
     val colors = MoontirTheme.colors
     val strings = AppI18n.current
 
+    val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 104.dp + navBarBottom),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {

@@ -1,9 +1,13 @@
+// retrofit
+
 package com.moontir.app.data.repository
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.moontir.app.MoontirApplication
 import com.moontir.app.data.api.ApiClient
 import com.moontir.app.data.local.SessionManager
+import com.moontir.app.data.location.androidGeocoderReverseLookup
 import com.moontir.app.data.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,7 +17,9 @@ import retrofit2.Response
 import java.io.IOException
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 class MoontirRepository(private val sessionManager: SessionManager) {
 
@@ -346,23 +352,38 @@ class MoontirRepository(private val sessionManager: SessionManager) {
         withContext(Dispatchers.IO) {
             try {
                 val url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=jsonv2&addressdetails=1"
-                val client = OkHttpClient()
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(6, TimeUnit.SECONDS)
+                    .readTimeout(6, TimeUnit.SECONDS)
+                    .build()
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Moontir/1.0 AndroidApp")
                     .build()
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful && response.body != null) {
-                    val str = response.body!!.string()
-                    val mapType = object : TypeToken<Map<String, Any>>() {}.type
-                    val rawMap: Map<String, Any> = Gson().fromJson(str, mapType)
-                    val disp = rawMap["display_name"]?.toString() ?: "Picked Location"
-                    return@withContext Result.success(GeocodeResult(displayName = disp, latitude = lat, longitude = lon))
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful && response.body != null) {
+                        val str = response.body!!.string()
+                        val mapType = object : TypeToken<Map<String, Any>>() {}.type
+                        val rawMap: Map<String, Any> = Gson().fromJson(str, mapType)
+                        val disp = rawMap["display_name"]?.toString()
+                        if (!disp.isNullOrBlank()) {
+                            return@withContext Result.success(GeocodeResult(displayName = disp, latitude = lat, longitude = lon))
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                // fallback below
+            } catch (_: Exception) {
+                // fallback to Android Geocoder below
             }
-            Result.success(GeocodeResult(displayName = "Jl. Pemuda No. 12, Semarang (-6.98, 110.42)", latitude = lat, longitude = lon))
+
+            try {
+                val nativeAddr = androidGeocoderReverseLookup(MoontirApplication.instance, lat, lon)
+                if (!nativeAddr.isNullOrBlank()) {
+                    return@withContext Result.success(GeocodeResult(displayName = nativeAddr, latitude = lat, longitude = lon))
+                }
+            } catch (_: Throwable) {}
+
+            val fallbackLabel = String.format(Locale.US, "GPS Location (%.5f, %.5f)", lat, lon)
+            Result.success(GeocodeResult(displayName = fallbackLabel, latitude = lat, longitude = lon))
         }
 
     suspend fun getOrders(): Result<List<Order>> = withContext(Dispatchers.IO) {
@@ -396,6 +417,37 @@ class MoontirRepository(private val sessionManager: SessionManager) {
             "${chosenServices.first().name} + ${chosenServices.size - 1} more"
         }
 
+        val history = buildList {
+            if (order.paymentStatus == "paid") {
+                val methodEn = when (order.paymentMethod) {
+                    "card" -> "Debit / Credit Card"
+                    "qris" -> "QRIS"
+                    else -> "Online"
+                }
+                val methodId = when (order.paymentMethod) {
+                    "card" -> "Kartu Debit / Kredit"
+                    "qris" -> "QRIS"
+                    else -> "Online"
+                }
+                add(
+                    StatusHistoryItem(
+                        key = "paid",
+                        label = "Payment verified ($methodEn · Simulation)",
+                        labelId = "Pembayaran terverifikasi ($methodId · Simulasi)",
+                        at = createdIso
+                    )
+                )
+            }
+            add(
+                StatusHistoryItem(
+                    key = "dispatch",
+                    label = "Dispatch confirmed",
+                    labelId = "Dispatch dikonfirmasi",
+                    at = createdIso
+                )
+            )
+        }
+
         val newOrder = Order(
             id = "ord-" + UUID.randomUUID().toString().take(8),
             serviceId = chosenServices.joinToString(",") { it.id },
@@ -406,17 +458,12 @@ class MoontirRepository(private val sessionManager: SessionManager) {
             scheduleTime = order.scheduleTime,
             notes = order.notes,
             status = "dispatch",
-            statusHistory = listOf(
-                StatusHistoryItem(
-                    key = "dispatch",
-                    label = "Dispatch confirmed",
-                    labelId = "Dispatch dikonfirmasi",
-                    at = createdIso
-                )
-            ),
+            statusHistory = history,
             items = quote.items,
             total = quote.total,
-            paymentStatus = "unpaid",
+            paymentStatus = order.paymentStatus,
+            paymentMethod = order.paymentMethod,
+            paymentReference = order.paymentReference,
             createdAt = createdIso,
             rating = null
         )
@@ -522,13 +569,13 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 nameId = "Derek Mobil Darurat",
                 category = "Emergency Service",
                 categoryId = "Layanan Darurat",
-                description = "24/7 flatbed emergency towing to your preferred workshop or home safely.",
-                descriptionId = "Layanan derek gendong darurat 24/7 ke bengkel pilihan atau rumah dengan aman.",
+                description = "24/7 flatbed emergency towing to your preferred workshop or home safely with maximum range of 20 KMs.",
+                descriptionId = "Layanan derek darurat 24/7 ke bengkel pilihan atau rumah dengan aman dengan jarak maksimal 20 KM.",
                 duration = "30–45 mins arrival",
                 durationId = "30–45 mnt tiba",
                 price = 400000,
                 featured = true,
-                features = listOf("24/7 rapid dispatch", "Flatbed towing", "Up to 15 km included", "Safe harness locking")
+                features = listOf("24/7 rapid dispatch", "Flatbed towing", "Up to 20 km included", "Safe harness locking")
             ),
             Service(
                 id = "emg_jump",
@@ -566,13 +613,13 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 id = "car_check",
                 group = "car_service",
                 name = "Essential Car Checkup",
-                nameId = "Pemeriksaan Mobil Esensial",
+                nameId = "Pemeriksaan Mobil Menyeluruh",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "Comprehensive 35-point safety inspection covering brakes, suspension, belts, and engine vitals.",
                 descriptionId = "Inspeksi keselamatan 35 titik komprehensif mencakup rem, suspensi, belt, dan kondisi mesin.",
-                duration = "60 minutes",
-                durationId = "60 menit",
+                duration = "30 minutes",
+                durationId = "30 menit",
                 price = 175000,
                 featured = false,
                 features = listOf("35-point safety check", "Brake & pad wear test", "Fluid condition test", "Digital health report")
@@ -596,7 +643,7 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 id = "fluid_refresh",
                 group = "car_service",
                 name = "Full Fluid Refresh",
-                nameId = "Segarkan Semua Fluida",
+                nameId = "Ganti Semua Oli dan Cairan",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "Drain, flush, and refill coolant, brake fluid, transmission fluid check, and windshield washer.",
@@ -641,14 +688,14 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 id = "ac_refresh",
                 group = "car_service",
                 name = "Air Conditioner Refresh",
-                nameId = "Segarkan AC Mobil",
+                nameId = "Refresh AC Mobil",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "AC cabin ozone sterilization, evaporator foam cleaning, cabin filter renewal, and refrigerant pressure test.",
                 descriptionId = "Sterilisasi ozon kabin, busa pembersih evaporator, pembersihan filter kabin, dan tes freon.",
                 duration = "60 minutes",
                 durationId = "60 menit",
-                price = 280000,
+                price = 300000,
                 featured = false,
                 features = listOf("Evaporator foam wash", "Freon pressure check", "Cabin ozone mist", "Blower fan clean")
             ),
@@ -688,7 +735,7 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 id = "glass",
                 group = "detail",
                 name = "Crystal Glass Coating",
-                nameId = "Lapisan Kaca Kristal",
+                nameId = "Pelapis Kaca Kristal",
                 category = "Car Detailing",
                 categoryId = "Detailing Mobil",
                 description = "Hydrophobic glass coating on all windshields and windows for clarity and safety in heavy rain.",
@@ -708,8 +755,8 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 nameId = "Paket Full Moon",
                 category = "Moontir Special Care",
                 categoryId = "Perawatan Spesial",
-                description = "Signature all-in-one bundle: Exterior Detailing + Interior Detailing with 35-point mechanical inspection.",
-                descriptionId = "Paket andalan lengkap: Detailing Eksterior + Detailing Interior dengan inspeksi mekanis 35 titik.",
+                description = "Exterior Detailing + Interior Detailing with 35-point mechanical inspection.",
+                descriptionId = "Detailing Eksterior + Detailing Interior dengan inspeksi mekanis 35 titik.",
                 duration = "4 hours",
                 durationId = "4 jam",
                 price = 495000,
@@ -723,8 +770,8 @@ class MoontirRepository(private val sessionManager: SessionManager) {
                 nameId = "Perawatan Total Eclipse",
                 category = "Moontir Special Care",
                 categoryId = "Perawatan Spesial",
-                description = "The ultimate pinnacle treatment: Full Detailing, Crystal Glass Coating, and Complete Engine Tune-Up.",
-                descriptionId = "Perawatan termewah: Detailing Penuh, Lapisan Kaca Kristal, dan Tune-Up Mesin Lengkap.",
+                description = "Full Interior & Exterior Detailing, Crystal Glass Coating, and Complete Engine Tune-Up with inspection.",
+                descriptionId = "Detailing Interior & Exterior Penuh, Lapisan Kaca Kristal, dan Tune-Up Mesin Lengkap dengan inspeksi.",
                 duration = "5 hours",
                 durationId = "5 jam",
                 price = 685000,

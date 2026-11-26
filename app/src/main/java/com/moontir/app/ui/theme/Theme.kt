@@ -1,12 +1,16 @@
 package com.moontir.app.ui.theme
 
+import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 data class MoontirCustomColors(
     val surface: Color,
@@ -119,17 +123,32 @@ object MoontirTheme {
 
 @Composable
 fun MoontirAppTheme(
-    themeMode: String = "system", // "system", "dark", "light"
+    themeMode: String = "system", // "auto", "system", "dark", "light"
+    ambientIsDark: Boolean? = null,
     content: @Composable () -> Unit
 ) {
+    val systemDark = isSystemInDarkTheme()
     val isDark = when (themeMode) {
         "dark" -> true
         "light" -> false
-        else -> isSystemInDarkTheme()
+        "auto" -> ambientIsDark ?: systemDark
+        else -> systemDark
     }
 
     val colorScheme = if (isDark) DarkColorScheme else LightColorScheme
     val customColors = if (isDark) DarkCustomColors else LightCustomColors
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !isDark
+                controller.isAppearanceLightNavigationBars = !isDark
+            }
+        }
+    }
 
     CompositionLocalProvider(LocalMoontirColors provides customColors) {
         MaterialTheme(

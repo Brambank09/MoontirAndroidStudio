@@ -49,7 +49,8 @@ fun AuthScreen(
         modifier = modifier
             .fillMaxSize()
             .background(colors.surface)
-            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
     ) {
         // Top Right Language Chip
         Surface(

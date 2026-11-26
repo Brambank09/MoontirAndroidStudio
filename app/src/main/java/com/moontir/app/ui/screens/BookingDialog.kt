@@ -1,7 +1,10 @@
 package com.moontir.app.ui.screens
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,10 +32,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.moontir.app.data.location.LocationFetchResult
+import com.moontir.app.data.location.fetchCurrentDeviceLocation
+import com.moontir.app.data.location.hasLocationPermission
 import com.moontir.app.data.model.*
 import com.moontir.app.ui.components.*
 import com.moontir.app.ui.i18n.AppI18n
 import com.moontir.app.ui.theme.MoontirTheme
+import com.moontir.app.ui.theme.SubtleEmergencyRed
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -53,8 +61,19 @@ fun BookingDialog(
     onGetQuote: suspend (String, String) -> Quote?,
     onSearchAddress: suspend (String) -> List<GeocodeResult>,
     onReverseGeocode: suspend (Double, Double) -> GeocodeResult?,
-    onConfirmOrder: (serviceId: String, vehicleId: String, address: Address, date: String, time: String, notes: String) -> Unit,
-    onGetMultiQuote: (suspend (List<String>, String) -> Quote?)? = null
+    onConfirmOrder: (
+        serviceId: String,
+        vehicleId: String,
+        address: Address,
+        date: String,
+        time: String,
+        notes: String,
+        paymentMethod: String,
+        paymentStatus: String,
+        paymentReference: String?
+    ) -> Unit,
+    onGetMultiQuote: (suspend (List<String>, String) -> Quote?)? = null,
+    savedCard: SavedCard? = null
 ) {
     if (!isOpen) return
 
@@ -75,6 +94,87 @@ fun BookingDialog(
     var addressQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
+    var isLocatingGps by remember(isOpen) { mutableStateOf(false) }
+    var locationError by remember(isOpen) { mutableStateOf<String?>(null) }
+
+    // Separate window state for live pin-point map picker
+    var showMapPickerDialog by remember(isOpen) { mutableStateOf(false) }
+    var draftMapLat by remember { mutableStateOf<Double?>(null) }
+    var draftMapLon by remember { mutableStateOf<Double?>(null) }
+    var draftMapLabel by remember { mutableStateOf("") }
+    var isResolvingMapPin by remember { mutableStateOf(false) }
+
+    // Payment method & local payment simulation states (pre-filled from saved card if available)
+    var selectedPaymentMethod by remember(isOpen) { mutableStateOf("pay_after_service") }
+    var paymentRef by remember(isOpen) { mutableStateOf(generateSimulatedPaymentRef("qris")) }
+    var cardNumber by remember(isOpen, savedCard) { mutableStateOf(savedCard?.cardNumber ?: "") }
+    var cardHolder by remember(isOpen, savedCard) { mutableStateOf(savedCard?.cardHolder ?: "") }
+    var cardExpiry by remember(isOpen, savedCard) { mutableStateOf(savedCard?.expiry ?: "") }
+    var cardCvv by remember(isOpen, savedCard) { mutableStateOf(savedCard?.cvv ?: "") }
+    var paymentValidationError by remember(isOpen) { mutableStateOf<String?>(null) }
+    var isSimulatingPayment by remember(isOpen) { mutableStateOf(false) }
+
+    fun openMapPicker() {
+        draftMapLat = addressLat ?: -6.9932
+        draftMapLon = addressLon ?: 110.4203
+        draftMapLabel = addressLabel
+        locationError = null
+        showMapPickerDialog = true
+    }
+
+    fun triggerGpsLocationLookup() {
+        if (isLocatingGps) return
+        coroutineScope.launch {
+            isLocatingGps = true
+            locationError = null
+            try {
+                when (val result = fetchCurrentDeviceLocation(context)) {
+                    is LocationFetchResult.Success -> {
+                        val rev = try {
+                            onReverseGeocode(result.latitude, result.longitude)
+                        } catch (_: Throwable) {
+                            null
+                        }
+                        val resolvedLabel = rev?.displayName?.takeIf { it.isNotBlank() }
+                            ?: String.format(Locale.US, "GPS Location (%.5f, %.5f)", result.latitude, result.longitude)
+                        if (showMapPickerDialog) {
+                            draftMapLat = result.latitude
+                            draftMapLon = result.longitude
+                            draftMapLabel = resolvedLabel
+                        } else {
+                            addressLat = result.latitude
+                            addressLon = result.longitude
+                            addressLabel = resolvedLabel
+                            searchResults = emptyList()
+                        }
+                    }
+                    LocationFetchResult.PermissionDenied -> {
+                        locationError = strings.locationPermissionDenied
+                    }
+                    LocationFetchResult.LocationDisabled -> {
+                        locationError = strings.gpsDisabledError
+                    }
+                    is LocationFetchResult.Error -> {
+                        locationError = strings.gpsFixFailedError
+                    }
+                }
+            } finally {
+                isLocatingGps = false
+            }
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            triggerGpsLocationLookup()
+        } else {
+            locationError = strings.locationPermissionDenied
+        }
+    }
 
     val isEmergencyBooking = selectedServices.any { it.group == "emergency" }
     val isSpecialCareBooking = selectedServices.any { it.group == "special" }
@@ -121,7 +221,7 @@ fun BookingDialog(
             "emg_tow" -> 45
             "emg_jump" -> 30
             "emg_tire" -> 35
-            "car_check" -> 60
+            "car_check" -> 30
             "oil_change" -> 45
             "fluid_refresh" -> 60
             "full_tune" -> 90
@@ -194,7 +294,7 @@ fun BookingDialog(
         val startM = parts.getOrNull(1)?.toIntOrNull() ?: 0
         val startTotalMins = startH * 60 + startM
         val endTotalMins = startTotalMins + totalDurationMinutes
-        val endH = (endTotalMins / 60) % 24
+        val endH = (endTotalMins / 60) % 24 //modulo
         val endM = endTotalMins % 60
         String.format(Locale.US, "%02d:%02d", endH, endM)
     }
@@ -263,7 +363,11 @@ fun BookingDialog(
     }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            if (!isSimulatingPayment) {
+                if (step == 6) step = 5 else onDismiss()
+            }
+        },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -285,21 +389,32 @@ fun BookingDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Close", tint = colors.onSurface)
+                    IconButton(
+                        onClick = {
+                            if (!isSimulatingPayment) {
+                                if (step == 6) step = 5 else onDismiss()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = if (step == 6) strings.back else "Close",
+                            tint = colors.onSurface
+                        )
                     }
                     MoontirLogoView(height = 26.dp)
                     Spacer(modifier = Modifier.width(44.dp))
                 }
 
                 // Progress Step Dots
+                val totalProgressSteps = if (selectedPaymentMethod == "pay_after_service") 5 else 6
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    for (i in 1..5) {
+                    for (i in 1..totalProgressSteps) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -321,8 +436,13 @@ fun BookingDialog(
                 ) {
                     item(key = "header") {
                         Column {
+                            val headerKicker = if (step == 6) {
+                                if (isIndonesian) "PEMBAYARAN · 06/06" else "PAYMENT · 06/06"
+                            } else {
+                                "BOOKING · 0$step/$totalProgressSteps"
+                            }
                             Text(
-                                text = "BOOKING · 0$step/5",
+                                text = headerKicker,
                                 color = colors.onSurfaceSecondary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Black,
@@ -334,7 +454,8 @@ fun BookingDialog(
                                 2 -> strings.selectVehicle
                                 3 -> strings.address
                                 4 -> strings.schedule
-                                else -> strings.review
+                                5 -> strings.review
+                                else -> strings.paymentSimulationTitle
                             }
                             Text(
                                 text = stepTitle,
@@ -343,8 +464,13 @@ fun BookingDialog(
                                 fontWeight = FontWeight.Black
                             )
                             Spacer(modifier = Modifier.height(2.dp))
+                            val stepSubtitle = when (step) {
+                                3 -> strings.dragPinHint
+                                6 -> if (selectedPaymentMethod == "card") strings.cardPayment else strings.qrisPayment
+                                else -> if (isIndonesian) "Rawat mobilmu dengan tenang." else "Care for your car, mindfully."
+                            }
                             Text(
-                                text = if (step == 3) strings.dragPinHint else if (isIndonesian) "Rawat mobilmu dengan tenang." else "Care for your car, mindfully.",
+                                text = stepSubtitle,
                                 color = colors.muted,
                                 fontSize = 13.sp
                             )
@@ -357,8 +483,8 @@ fun BookingDialog(
                             if (isEmergencyBooking) {
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = Color(0xFF1E1214),
-                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFEF4444)),
+                                    color = colors.surfaceSecondary,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
@@ -374,13 +500,13 @@ fun BookingDialog(
                                                 modifier = Modifier
                                                     .size(36.dp)
                                                     .clip(CircleShape)
-                                                    .background(Color(0xFFEF4444).copy(alpha = 0.2f)),
+                                                    .background(SubtleEmergencyRed.copy(alpha = 0.12f)),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Outlined.WarningAmber,
                                                     contentDescription = null,
-                                                    tint = Color(0xFFEF4444),
+                                                    tint = SubtleEmergencyRed,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }
@@ -388,20 +514,20 @@ fun BookingDialog(
                                             Column {
                                                 Text(
                                                     text = "${selectedServices.size} ${if (isIndonesian) "Layanan Darurat Dipilih (24/7)" else "Emergency Service(s) Selected (24/7)"}",
-                                                    color = Color(0xFFEF4444),
+                                                    color = colors.onSurface,
                                                     fontSize = 13.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                                 Text(
                                                     text = strings.emergencyExclusive,
-                                                    color = Color.White.copy(alpha = 0.8f),
+                                                    color = colors.onSurfaceSecondary,
                                                     fontSize = 11.sp,
                                                     lineHeight = 14.sp
                                                 )
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 Text(
                                                     text = "Subtotal: ${formatRupiah(selectedServices.sumOf { it.price })}",
-                                                    color = Color(0xFFFCA5A5),
+                                                    color = colors.moonGlow,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.SemiBold
                                                 )
@@ -411,7 +537,7 @@ fun BookingDialog(
                                             onClick = { selectedServices = emptySet() },
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                         ) {
-                                            Text(strings.clearSelection, color = Color(0xFFEF4444), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(strings.clearSelection, color = colors.error, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -516,12 +642,8 @@ fun BookingDialog(
                             ) {
                                 items(filterGroups, key = { it.first }) { (key, label) ->
                                     val isSelected = step1Category == key
-                                    val chipColor = if (isSelected) {
-                                        if (key == "emergency") Color(0xFFEF4444) else colors.brand
-                                    } else {
-                                        colors.surfaceTertiary
-                                    }
-                                    val textColor = if (isSelected) Color.White else colors.onSurface
+                                    val chipColor = if (isSelected) colors.brand else colors.surfaceTertiary
+                                    val textColor = if (isSelected) colors.onBrand else colors.onSurface
                                     Surface(
                                         shape = RoundedCornerShape(16.dp),
                                         color = chipColor,
@@ -556,14 +678,14 @@ fun BookingDialog(
                             if (list.isNotEmpty()) {
                                 item(key = "step1_cat_title_$catKey") {
                                     val title = when (catKey) {
-                                        "emergency" -> "🚨 " + strings.groupEmergency.uppercase() + (if (isIndonesian) " (SIAGA 24/7)" else " (24/7 ASSIST)")
+                                        "emergency" -> strings.groupEmergency.uppercase() + (if (isIndonesian) " (SIAGA 24/7)" else " (24/7 ASSIST)")
                                         "car_service" -> strings.groupCarService.uppercase()
                                         "detail" -> strings.groupDetail.uppercase()
                                         else -> strings.groupSpecial.uppercase() + (if (isIndonesian) " (PAKET ANDALAN)" else " (SIGNATURE)")
                                     }
                                     Text(
                                         text = title,
-                                        color = if (catKey == "emergency") Color(0xFFEF4444) else colors.onSurfaceSecondary,
+                                        color = colors.onSurfaceSecondary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Black,
                                         letterSpacing = 1.4.sp,
@@ -645,59 +767,124 @@ fun BookingDialog(
                                     isMultiline = true
                                 )
 
+                                // Search street/city input with compact Search icon button beside it
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.Bottom
                                 ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            // Mock/default coordinates for central Java / Semarang or device location
-                                            addressLat = -6.9932
-                                            addressLon = 110.4203
-                                            coroutineScope.launch {
-                                                try {
-                                                    val res = onReverseGeocode(-6.9932, 110.4203)
-                                                    if (res != null) addressLabel = res.displayName
-                                                } catch (_: Throwable) {}
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(20.dp),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
-                                        modifier = Modifier.weight(1f).height(44.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.MyLocation, contentDescription = null, tint = colors.onSurface, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(strings.useLocation, color = colors.onSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                    MoontirTextField(
+                                        value = addressQuery,
+                                        onValueChange = { addressQuery = it },
+                                        label = if (isIndonesian) "Cari jalan atau kota" else "Search a street or city",
+                                        leadingIcon = Icons.Outlined.Search,
+                                        modifier = Modifier.weight(1f)
+                                    )
 
-                                    OutlinedButton(
-                                        onClick = {
-                                            if (addressQuery.length >= 3) {
-                                                isSearching = true
-                                                coroutineScope.launch {
-                                                    try {
-                                                        searchResults = onSearchAddress(addressQuery)
-                                                    } catch (_: Throwable) {}
-                                                    isSearching = false
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = colors.brand,
+                                        modifier = Modifier
+                                            .size(56.dp)
+                                            .clickable(enabled = !isSearching) {
+                                                val trimmed = addressQuery.trim()
+                                                if (trimmed.length >= 3) {
+                                                    locationError = null
+                                                    isSearching = true
+                                                    coroutineScope.launch {
+                                                        try {
+                                                            searchResults = onSearchAddress(trimmed)
+                                                        } catch (_: Throwable) {}
+                                                        isSearching = false
+                                                    }
+                                                } else {
+                                                    locationError = if (isIndonesian) {
+                                                        "Ketik minimal 3 karakter untuk mencari alamat."
+                                                    } else {
+                                                        "Type at least 3 characters to search an address."
+                                                    }
                                                 }
                                             }
-                                        },
-                                        shape = RoundedCornerShape(20.dp),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
-                                        modifier = Modifier.weight(1f).height(44.dp)
                                     ) {
-                                        Icon(Icons.Outlined.Search, contentDescription = null, tint = colors.onSurface, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(strings.searchAddress, color = colors.onSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isSearching) {
+                                                CircularProgressIndicator(
+                                                    color = colors.onBrand,
+                                                    strokeWidth = 2.dp,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Search,
+                                                    contentDescription = strings.searchAddress,
+                                                    tint = colors.onBrand,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
-                                MoontirTextField(
-                                    value = addressQuery,
-                                    onValueChange = { addressQuery = it },
-                                    label = if (isIndonesian) "Cari jalan atau kota" else "Search a street or city",
-                                    leadingIcon = Icons.Outlined.Search
-                                )
+                                // "Use my location" button directly below search input row with balanced sizing
+                                OutlinedButton(
+                                    onClick = {
+                                        locationError = null
+                                        if (hasLocationPermission(context)) {
+                                            triggerGpsLocationLookup()
+                                        } else {
+                                            locationPermissionLauncher.launch(
+                                                arrayOf(
+                                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                                )
+                                            )
+                                        }
+                                    },
+                                    enabled = !isLocatingGps,
+                                    shape = RoundedCornerShape(20.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = colors.surfaceTertiary,
+                                        contentColor = colors.onSurface
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                ) {
+                                    if (isLocatingGps) {
+                                        CircularProgressIndicator(
+                                            color = colors.brand,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(strings.locatingGps, color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    } else {
+                                        Icon(Icons.Outlined.MyLocation, contentDescription = null, tint = colors.onSurface, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(strings.useLocation, color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    }
+                                }
+
+                                if (!locationError.isNullOrBlank()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = colors.error.copy(alpha = 0.12f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.error.copy(alpha = 0.4f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = locationError!!,
+                                            color = colors.error,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                        )
+                                    }
+                                }
 
                                 if (isSearching) {
                                     CircularProgressIndicator(color = colors.brand, modifier = Modifier.size(24.dp).align(Alignment.CenterHorizontally))
@@ -715,6 +902,7 @@ fun BookingDialog(
                                                 addressLat = result.latitude
                                                 addressLon = result.longitude
                                                 searchResults = emptyList()
+                                                locationError = null
                                             }
                                     ) {
                                         Row(
@@ -728,24 +916,49 @@ fun BookingDialog(
                                     }
                                 }
 
-                                // Interactive Leaflet Map
-                                LeafletMapView(
-                                    latitude = addressLat,
-                                    longitude = addressLon,
-                                    onPickPin = { lat, lon ->
-                                        addressLat = lat
-                                        addressLon = lon
-                                        coroutineScope.launch {
-                                            try {
-                                                val rev = onReverseGeocode(lat, lon)
-                                                if (rev != null) addressLabel = rev.displayName
-                                            } catch (_: Throwable) {}
-                                        }
-                                    },
-                                    heightDp = 220
-                                )
+                                // Interactive Live Map Preview (non-scrolling on step 3; tap opens full-screen Map Picker Window)
+                                val hasPinnedCoords = addressLat != null && addressLon != null
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    LeafletMapView(
+                                        latitude = addressLat,
+                                        longitude = addressLon,
+                                        onPickPin = { _, _ -> },
+                                        heightDp = 190,
+                                        interactive = false,
+                                        onPreviewClick = { openMapPicker() }
+                                    )
 
-                                if (addressLat != null && addressLon != null) {
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = colors.surfaceSecondary.copy(alpha = 0.94f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(10.dp)
+                                            .clickable { openMapPicker() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.OpenInFull,
+                                                contentDescription = null,
+                                                tint = colors.brand,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (hasPinnedCoords) strings.adjustPinOnMap else strings.pickPinOnMap,
+                                                color = colors.onSurface,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (hasPinnedCoords) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.fillMaxWidth()
@@ -787,11 +1000,11 @@ fun BookingDialog(
                         item(key = "step4_schedule") {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (isEmergencyBooking) {
-                                    // 24/7 IMMEDIATE EMERGENCY DISPATCH VIEW
+                                    // 24/7 IMMEDIATE EMERGENCY DISPATCH VIEW (Unified palette; subtle muted red icon only)
                                     Surface(
                                         shape = RoundedCornerShape(18.dp),
-                                        color = Color(0xFF1E1214),
-                                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFEF4444)),
+                                        color = colors.surfaceSecondary,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.borderStrong),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Column(modifier = Modifier.padding(18.dp)) {
@@ -800,29 +1013,29 @@ fun BookingDialog(
                                                     modifier = Modifier
                                                         .size(44.dp)
                                                         .clip(CircleShape)
-                                                        .background(Color(0xFFEF4444).copy(alpha = 0.2f)),
+                                                        .background(SubtleEmergencyRed.copy(alpha = 0.12f)),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Outlined.WarningAmber,
                                                         contentDescription = null,
-                                                        tint = Color(0xFFEF4444),
-                                                        modifier = Modifier.size(24.dp)
+                                                        tint = SubtleEmergencyRed,
+                                                        modifier = Modifier.size(22.dp)
                                                     )
                                                 }
                                                 Spacer(modifier = Modifier.width(14.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
-                                                        text = "🚨 24/7 IMMEDIATE DISPATCH",
-                                                        color = Color(0xFFEF4444),
+                                                        text = strings.immediateDispatch.uppercase(),
+                                                        color = colors.moonGlow,
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Black,
                                                         letterSpacing = 1.2.sp
                                                     )
                                                     Text(
                                                         text = strings.emergencyImmediateTitle,
-                                                        color = Color.White,
-                                                        fontSize = 17.sp,
+                                                        color = colors.onSurface,
+                                                        fontSize = 16.sp,
                                                         fontWeight = FontWeight.Black
                                                     )
                                                 }
@@ -831,7 +1044,7 @@ fun BookingDialog(
                                             Spacer(modifier = Modifier.height(10.dp))
                                             Text(
                                                 text = strings.emergencyImmediateSub,
-                                                color = Color.White.copy(alpha = 0.85f),
+                                                color = colors.onSurfaceSecondary,
                                                 fontSize = 12.sp,
                                                 lineHeight = 16.sp
                                             )
@@ -845,22 +1058,22 @@ fun BookingDialog(
                                             ) {
                                                 Surface(
                                                     shape = RoundedCornerShape(12.dp),
-                                                    color = Color.Black.copy(alpha = 0.4f),
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)),
+                                                    color = colors.surfaceTertiary,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
                                                     modifier = Modifier.weight(1f)
                                                 ) {
                                                     Column(modifier = Modifier.padding(10.dp)) {
-                                                        Text(strings.startTime.uppercase(), color = Color(0xFFFCA5A5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                        Text(strings.startTime.uppercase(), color = colors.onSurfaceSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                         Spacer(modifier = Modifier.height(2.dp))
                                                         Text(
                                                             text = if (isIndonesian) "Sekarang" else "Immediate",
-                                                            color = Color.White,
+                                                            color = colors.onSurface,
                                                             fontSize = 13.sp,
                                                             fontWeight = FontWeight.Black
                                                         )
                                                         Text(
-                                                            text = "24/7 Siaga",
-                                                            color = Color(0xFFEF4444),
+                                                            text = if (isIndonesian) "Siaga 24/7" else "24/7 Ready",
+                                                            color = colors.moonGlow,
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.SemiBold
                                                         )
@@ -869,22 +1082,22 @@ fun BookingDialog(
 
                                                 Surface(
                                                     shape = RoundedCornerShape(12.dp),
-                                                    color = Color.Black.copy(alpha = 0.4f),
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)),
+                                                    color = colors.surfaceTertiary,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
                                                     modifier = Modifier.weight(1f)
                                                 ) {
                                                     Column(modifier = Modifier.padding(10.dp)) {
-                                                        Text(strings.totalDuration.uppercase(), color = Color(0xFFFCA5A5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                        Text(strings.totalDuration.uppercase(), color = colors.onSurfaceSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                         Spacer(modifier = Modifier.height(2.dp))
                                                         Text(
                                                             text = formatDurationText(totalDurationMinutes),
-                                                            color = Color.White,
+                                                            color = colors.onSurface,
                                                             fontSize = 13.sp,
                                                             fontWeight = FontWeight.Black
                                                         )
                                                         Text(
-                                                            text = "${selectedServices.size} Layanan",
-                                                            color = Color(0xFFEF4444),
+                                                            text = "${selectedServices.size} ${if (isIndonesian) "Layanan" else "Service(s)"}",
+                                                            color = colors.moonGlow,
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.SemiBold
                                                         )
@@ -893,22 +1106,22 @@ fun BookingDialog(
 
                                                 Surface(
                                                     shape = RoundedCornerShape(12.dp),
-                                                    color = Color.Black.copy(alpha = 0.4f),
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)),
+                                                    color = colors.surfaceTertiary,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
                                                     modifier = Modifier.weight(1f)
                                                 ) {
                                                     Column(modifier = Modifier.padding(10.dp)) {
-                                                        Text(strings.estCompletion.uppercase(), color = Color(0xFFFCA5A5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                        Text(strings.estCompletion.uppercase(), color = colors.onSurfaceSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                         Spacer(modifier = Modifier.height(2.dp))
                                                         Text(
                                                             text = "~${emergencyInfo.third}",
-                                                            color = Color.White,
+                                                            color = colors.onSurface,
                                                             fontSize = 13.sp,
                                                             fontWeight = FontWeight.Black
                                                         )
                                                         Text(
-                                                            text = "Waktu tiba",
-                                                            color = Color(0xFFEF4444),
+                                                            text = if (isIndonesian) "Waktu tiba" else "Est. arrival",
+                                                            color = colors.moonGlow,
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.SemiBold
                                                         )
@@ -917,12 +1130,12 @@ fun BookingDialog(
                                             }
 
                                             Spacer(modifier = Modifier.height(14.dp))
-                                            HorizontalDivider(color = Color(0xFFEF4444).copy(alpha = 0.3f))
+                                            HorizontalDivider(color = colors.border)
                                             Spacer(modifier = Modifier.height(10.dp))
 
                                             Text(
                                                 text = if (isIndonesian) "Layanan darurat yang dipanggil:" else "Dispatched emergency services:",
-                                                color = Color(0xFFFCA5A5),
+                                                color = colors.onSurfaceSecondary,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -932,8 +1145,8 @@ fun BookingDialog(
                                                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
-                                                    Text("• ${if (isIndonesian) s.nameId else s.name}", color = Color.White, fontSize = 12.sp)
-                                                    Text(if (isIndonesian) s.durationId else s.duration, color = Color(0xFFFCA5A5), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                    Text("• ${if (isIndonesian) s.nameId else s.name}", color = colors.onSurface, fontSize = 12.sp)
+                                                    Text(if (isIndonesian) s.durationId else s.duration, color = colors.moonGlow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                                 }
                                             }
                                         }
@@ -1267,18 +1480,104 @@ fun BookingDialog(
                                             Text(strings.total.uppercase(), color = colors.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Black)
                                             Text(formatRupiah(grandTotal), color = colors.moonGlow, fontSize = 17.sp, fontWeight = FontWeight.Black)
                                         }
-
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Text(
-                                            text = strings.unpaid,
-                                            color = colors.muted,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.align(Alignment.CenterHorizontally)
-                                        )
                                     }
                                 }
+
+                                // Payment Method Selection Section
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = strings.paymentMethod.uppercase(),
+                                    color = colors.onSurfaceSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.4.sp
+                                )
+
+                                PaymentMethodOptionCard(
+                                    icon = Icons.Outlined.Payments,
+                                    title = strings.payAfterService,
+                                    subtitle = strings.payAfterServiceDesc,
+                                    selected = selectedPaymentMethod == "pay_after_service",
+                                    onClick = { selectedPaymentMethod = "pay_after_service" }
+                                )
+
+                                val savedLast4 = savedCard?.cardNumber?.filter { it.isDigit() }?.takeLast(4).orEmpty()
+                                val cardSubtitle = if (savedLast4.isNotEmpty()) {
+                                    "${strings.cardPaymentDesc} (**** $savedLast4)"
+                                } else {
+                                    strings.cardPaymentDesc
+                                }
+                                PaymentMethodOptionCard(
+                                    icon = Icons.Outlined.CreditCard,
+                                    title = strings.cardPayment,
+                                    subtitle = cardSubtitle,
+                                    selected = selectedPaymentMethod == "card",
+                                    onClick = { selectedPaymentMethod = "card" }
+                                )
+
+                                PaymentMethodOptionCard(
+                                    icon = Icons.Outlined.QrCode2,
+                                    title = strings.qrisPayment,
+                                    subtitle = strings.qrisPaymentDesc,
+                                    selected = selectedPaymentMethod == "qris",
+                                    onClick = { selectedPaymentMethod = "qris" }
+                                )
                             }
+                        }
+                    }
+
+                    // STEP 6: LOCAL PAYMENT SIMULATION PAGE (CARD / QRIS)
+                    if (step == 6) {
+                        item(key = "step6_payment_simulation") {
+                            val grandTotal = quote?.total ?: selectedServices.sumOf { it.price }
+                            val serviceSummary = if (selectedServices.size == 1) {
+                                val first = selectedServices.first()
+                                if (isIndonesian) first.nameId else first.name
+                            } else {
+                                val first = selectedServices.firstOrNull()
+                                val firstName = if (first != null) (if (isIndonesian) first.nameId else first.name) else "Moontir Service"
+                                "$firstName + ${selectedServices.size - 1} ${if (isIndonesian) "lainnya" else "more"}"
+                            }
+                            PaymentSimulationContent(
+                                paymentMethod = selectedPaymentMethod,
+                                grandTotal = grandTotal,
+                                serviceSummary = serviceSummary,
+                                paymentRef = paymentRef,
+                                isIndonesian = isIndonesian,
+                                cardNumber = cardNumber,
+                                onCardNumberChange = {
+                                    cardNumber = it
+                                    paymentValidationError = null
+                                },
+                                cardHolder = cardHolder,
+                                onCardHolderChange = {
+                                    cardHolder = it
+                                    paymentValidationError = null
+                                },
+                                cardExpiry = cardExpiry,
+                                onCardExpiryChange = {
+                                    cardExpiry = it
+                                    paymentValidationError = null
+                                },
+                                cardCvv = cardCvv,
+                                onCardCvvChange = {
+                                    cardCvv = it
+                                    paymentValidationError = null
+                                },
+                                validationError = paymentValidationError,
+                                isProcessing = isSimulatingPayment,
+                                hasSavedCard = savedCard != null && cardNumber == savedCard.cardNumber,
+                                onFillDemoCard = {
+                                    cardNumber = "4242 4242 4242 4242"
+                                    cardHolder = if (isIndonesian) "Pemilik Kartu Demo" else "Demo Cardholder"
+                                    cardExpiry = "12/28"
+                                    cardCvv = "123"
+                                    paymentValidationError = null
+                                },
+                                onRefreshQris = {
+                                    paymentRef = generateSimulatedPaymentRef("qris")
+                                }
+                            )
                         }
                     }
 
@@ -1303,43 +1602,384 @@ fun BookingDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (step > 1) {
-                            TextButton(onClick = { step-- }) {
+                            TextButton(
+                                onClick = {
+                                    if (!isSimulatingPayment && !busy) {
+                                        paymentValidationError = null
+                                        step--
+                                    }
+                                },
+                                enabled = !isSimulatingPayment && !busy
+                            ) {
                                 Text(strings.back, color = colors.onSurfaceSecondary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                         } else {
                             Spacer(modifier = Modifier.width(48.dp))
                         }
 
-                        if (step < 5) {
-                            MoontirButton(
-                                text = strings.next,
-                                onClick = { if (isStepValid) step++ },
-                                enabled = isStepValid,
-                                modifier = Modifier.width(140.dp)
+                        when {
+                            step < 5 -> {
+                                MoontirButton(
+                                    text = strings.next,
+                                    onClick = { if (isStepValid) step++ },
+                                    enabled = isStepValid,
+                                    modifier = Modifier.width(140.dp)
+                                )
+                            }
+                            step == 5 -> {
+                                if (selectedPaymentMethod == "pay_after_service") {
+                                    MoontirButton(
+                                        text = strings.confirm,
+                                        onClick = {
+                                            val v = selectedVehicle
+                                            if (selectedServices.isNotEmpty() && v != null && addressLabel.isNotBlank()) {
+                                                onConfirmOrder(
+                                                    selectedServices.joinToString(",") { it.id },
+                                                    v.id,
+                                                    Address(addressLabel, addressLat, addressLon),
+                                                    effectiveDate,
+                                                    effectiveTime,
+                                                    notes,
+                                                    "pay_after_service",
+                                                    "unpaid",
+                                                    null
+                                                )
+                                            }
+                                        },
+                                        busy = busy,
+                                        modifier = Modifier.width(210.dp)
+                                    )
+                                } else {
+                                    MoontirButton(
+                                        text = strings.continueToPayment,
+                                        onClick = {
+                                            paymentRef = generateSimulatedPaymentRef(selectedPaymentMethod)
+                                            paymentValidationError = null
+                                            step = 6
+                                        },
+                                        busy = busy,
+                                        modifier = Modifier.width(220.dp)
+                                    )
+                                }
+                            }
+                            else -> {
+                                // Step 6: Local Payment Simulation confirmation
+                                val ctaLabel = if (selectedPaymentMethod == "card") {
+                                    strings.payNowSimulate
+                                } else {
+                                    strings.simulateQrisPaid
+                                }
+                                MoontirButton(
+                                    text = ctaLabel,
+                                    onClick = {
+                                        val v = selectedVehicle
+                                        if (selectedServices.isEmpty() || v == null || addressLabel.isBlank()) return@MoontirButton
+                                        if (selectedPaymentMethod == "card") {
+                                            val err = validateCardPaymentInput(
+                                                cardNumber = cardNumber,
+                                                cardHolder = cardHolder,
+                                                expiry = cardExpiry,
+                                                cvv = cardCvv,
+                                                isIndonesian = isIndonesian
+                                            )
+                                            if (err != null) {
+                                                paymentValidationError = err
+                                                return@MoontirButton
+                                            }
+                                        }
+                                        coroutineScope.launch {
+                                            isSimulatingPayment = true
+                                            paymentValidationError = null
+                                            delay(1100L)
+                                            onConfirmOrder(
+                                                selectedServices.joinToString(",") { it.id },
+                                                v.id,
+                                                Address(addressLabel, addressLat, addressLon),
+                                                effectiveDate,
+                                                effectiveTime,
+                                                notes,
+                                                selectedPaymentMethod,
+                                                "paid",
+                                                paymentRef
+                                            )
+                                            isSimulatingPayment = false
+                                        }
+                                    },
+                                    busy = isSimulatingPayment || busy,
+                                    modifier = Modifier.width(235.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Separate Window/Layer for Interactive Live Pin-Point Map Picker
+    if (showMapPickerDialog) {
+        Dialog(
+            onDismissRequest = { showMapPickerDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = colors.surface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                ) {
+                    // Dedicated Map Window Header
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(onClick = { showMapPickerDialog = false }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = strings.back,
+                                tint = colors.onSurface
                             )
-                        } else {
-                            MoontirButton(
-                                text = strings.confirm,
-                                onClick = {
-                                    val v = selectedVehicle
-                                    if (selectedServices.isNotEmpty() && v != null && addressLabel.isNotBlank()) {
-                                        onConfirmOrder(
-                                            selectedServices.joinToString(",") { it.id },
-                                            v.id,
-                                            Address(addressLabel, addressLat, addressLon),
-                                            effectiveDate,
-                                            effectiveTime,
-                                            notes
+                        }
+                        Text(
+                            text = strings.mapPickerTitle,
+                            color = colors.onSurface,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = {
+                                if (!isLocatingGps) {
+                                    locationError = null
+                                    if (hasLocationPermission(context)) {
+                                        triggerGpsLocationLookup()
+                                    } else {
+                                        locationPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                                Manifest.permission.ACCESS_COARSE_LOCATION
+                                            )
                                         )
                                     }
+                                }
+                            }
+                        ) {
+                            if (isLocatingGps) {
+                                CircularProgressIndicator(
+                                    color = colors.brand,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.MyLocation,
+                                    contentDescription = strings.useLocation,
+                                    tint = colors.brand
+                                )
+                            }
+                        }
+                    }
+
+                    // Live Address Preview Banner
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = colors.surfaceSecondary,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PinDrop,
+                                contentDescription = null,
+                                tint = colors.brand,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = draftMapLabel.ifBlank { strings.dragPinHint },
+                                    color = colors.onSurface,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2
+                                )
+                                if (draftMapLat != null && draftMapLon != null) {
+                                    Text(
+                                        text = String.format(Locale.US, "%.5f, %.5f", draftMapLat, draftMapLon),
+                                        color = colors.moonGlow,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            if (isResolvingMapPin) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                CircularProgressIndicator(
+                                    color = colors.brand,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (!locationError.isNullOrBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = colors.error.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.error.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = locationError!!,
+                                color = colors.error,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    // Full-height isolated map surface (no parent scroll container)
+                    LeafletMapView(
+                        latitude = draftMapLat,
+                        longitude = draftMapLon,
+                        onPickPin = { lat, lon ->
+                            draftMapLat = lat
+                            draftMapLon = lon
+                            locationError = null
+                            coroutineScope.launch {
+                                isResolvingMapPin = true
+                                try {
+                                    val rev = onReverseGeocode(lat, lon)
+                                    if (rev != null && rev.displayName.isNotBlank()) {
+                                        draftMapLabel = rev.displayName
+                                    } else {
+                                        draftMapLabel = String.format(Locale.US, "%.5f, %.5f", lat, lon)
+                                    }
+                                } catch (_: Throwable) {
+                                } finally {
+                                    isResolvingMapPin = false
+                                }
+                            }
+                        },
+                        heightDp = null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+
+                    // Bottom Confirm Bar
+                    Surface(
+                        color = colors.surface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.divider),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { showMapPickerDialog = false }) {
+                                Text(
+                                    text = strings.cancel,
+                                    color = colors.onSurfaceSecondary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            MoontirButton(
+                                text = strings.confirmPinLocation,
+                                onClick = {
+                                    addressLat = draftMapLat
+                                    addressLon = draftMapLon
+                                    if (draftMapLabel.isNotBlank()) {
+                                        addressLabel = draftMapLabel
+                                    } else if (draftMapLat != null && draftMapLon != null) {
+                                        addressLabel = String.format(Locale.US, "%.5f, %.5f", draftMapLat, draftMapLon)
+                                    }
+                                    searchResults = emptyList()
+                                    locationError = null
+                                    showMapPickerDialog = false
                                 },
-                                busy = busy,
-                                modifier = Modifier.width(200.dp)
+                                modifier = Modifier.width(210.dp)
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PaymentMethodOptionCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val colors = MoontirTheme.colors
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = colors.surfaceTertiary,
+        border = androidx.compose.foundation.BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) colors.brand else colors.border
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) colors.brand else colors.onSurfaceSecondary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = colors.onSurface,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = colors.onSurfaceSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            }
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+                colors = RadioButtonDefaults.colors(selectedColor = colors.brand)
+            )
         }
     }
 }

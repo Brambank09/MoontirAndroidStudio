@@ -1,5 +1,7 @@
 package com.moontir.app.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,17 +12,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -35,7 +43,12 @@ import com.moontir.app.data.model.Order
 import com.moontir.app.data.model.Service
 import com.moontir.app.data.model.Vehicle
 import com.moontir.app.ui.i18n.AppI18n
+import com.moontir.app.ui.theme.MoontirDarkEspresso
+import com.moontir.app.ui.theme.MoontirSageGreen
 import com.moontir.app.ui.theme.MoontirTheme
+import com.moontir.app.ui.theme.MoontirWarmIvory
+import com.moontir.app.ui.theme.StatusError
+import com.moontir.app.ui.theme.SubtleEmergencyRed
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -62,131 +75,161 @@ fun MoontirLogoView(
 
 @Composable
 fun MoontirTopBar(
-    activeOrderCount: Int,
-    currentLanguage: String,
-    onToggleLanguage: () -> Unit,
-    onOrdersClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = MoontirTheme.colors
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
             .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        contentAlignment = Alignment.Center
     ) {
-        // Language Toggle Chip
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = colors.surfaceTertiary,
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
-            modifier = Modifier.clickable { onToggleLanguage() }
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Language,
-                    contentDescription = "Language",
-                    tint = colors.onSurface,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = currentLanguage.uppercase(),
-                    color = colors.onSurface,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Center Brand Logo
         MoontirLogoView(height = 26.dp)
-
-        // Right Active Orders Badge Icon
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .clickable { onOrdersClick() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.ShoppingBag,
-                contentDescription = "Orders",
-                tint = colors.onSurface,
-                modifier = Modifier.size(22.dp)
-            )
-            if (activeOrderCount > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 2.dp, end = 2.dp)
-                        .size(16.dp)
-                        .background(colors.brand, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = activeOrderCount.toString(),
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                }
-            }
-        }
     }
 }
+
+private data class FloatingNavItem(
+    val route: String,
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector
+)
 
 @Composable
 fun MoontirBottomBar(
     currentScreen: String,
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    activeOrderCount: Int = 0,
+    userInitial: String? = null,
+    modifier: Modifier = Modifier
 ) {
-    val colors = MoontirTheme.colors
     val strings = AppI18n.current
+    val isLightTheme = MaterialTheme.colorScheme.background.red > 0.5f
+
+    // Floating capsule dock palette calibrated for high contrast in both light and dark modes
+    val dockContainerColor = if (isLightTheme) MoontirDarkEspresso else Color(0xFF1F1C1A)
+    val dockBorderColor = if (isLightTheme) Color(0x33F5F0E6) else Color(0x30F5F0E6)
+    val activeCapsuleColor = if (isLightTheme) Color(0xFF564E48) else Color(0xFF36312C)
+    val activeIconColor = MoontirWarmIvory
+    val inactiveIconColor = MoontirWarmIvory.copy(alpha = 0.72f)
 
     val items = listOf(
-        Triple("home", strings.home, Icons.Outlined.Home),
-        Triple("services", strings.services, Icons.Outlined.CleaningServices),
-        Triple("garage", strings.garage, Icons.Outlined.DirectionsCar),
-        Triple("orders", strings.orders, Icons.AutoMirrored.Outlined.ReceiptLong),
-        Triple("profile", strings.profile, Icons.Outlined.Person)
+        FloatingNavItem("home", strings.home, Icons.Filled.Home, Icons.Outlined.Home),
+        FloatingNavItem("services", strings.services, Icons.Filled.CleaningServices, Icons.Outlined.CleaningServices),
+        FloatingNavItem("garage", strings.garage, Icons.Filled.DirectionsCar, Icons.Outlined.DirectionsCar),
+        FloatingNavItem("orders", strings.orders, Icons.AutoMirrored.Filled.ReceiptLong, Icons.AutoMirrored.Outlined.ReceiptLong),
+        FloatingNavItem("profile", strings.profile, Icons.Filled.Person, Icons.Outlined.Person)
     )
 
-    NavigationBar(
-        containerColor = colors.surface,
-        tonalElevation = 8.dp,
-        modifier = Modifier.border(width = 1.dp, color = colors.border, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
     ) {
-        items.forEach { (route, label, icon) ->
-            val selected = currentScreen == route
-            NavigationBarItem(
-                selected = selected,
-                onClick = { onNavigate(route) },
-                icon = {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = label,
-                        tint = if (selected) colors.brand else colors.muted
+        Surface(
+            shape = CircleShape,
+            color = dockContainerColor,
+            shadowElevation = 12.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, dockBorderColor),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items.forEach { item ->
+                    val isSelected = currentScreen == item.route
+                    val pillColor by animateColorAsState(
+                        targetValue = if (isSelected) activeCapsuleColor else Color.Transparent,
+                        animationSpec = tween(durationMillis = 180),
+                        label = "navPillColor"
                     )
-                },
-                label = {
-                    Text(
-                        text = label,
-                        fontSize = 9.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                        color = if (selected) colors.onSurface else colors.muted
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    indicatorColor = Color.Transparent
-                )
-            )
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(pillColor)
+                            .semantics {
+                                contentDescription = item.label
+                                selected = isSelected
+                            }
+                            .clickable(role = Role.Tab) { onNavigate(item.route) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when (item.route) {
+                            "profile" -> {
+                                if (!userInitial.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) MoontirSageGreen else Color(0xFF3E3833))
+                                            .border(
+                                                width = if (isSelected) 2.dp else 1.5.dp,
+                                                color = if (isSelected) MoontirWarmIvory else inactiveIconColor,
+                                                shape = CircleShape
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = userInitial.take(1).uppercase(),
+                                            color = if (isSelected) MoontirDarkEspresso else MoontirWarmIvory,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Black
+                                        )
+                                    }
+                                } else {
+                                    Icon(
+                                        imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = null,
+                                        tint = if (isSelected) activeIconColor else inactiveIconColor,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                            }
+                            "orders" -> {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = null,
+                                        tint = if (isSelected) activeIconColor else inactiveIconColor,
+                                        modifier = Modifier.size(25.dp)
+                                    )
+                                    // Status dot marks a real active/in-progress order
+                                    if (activeOrderCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .offset(x = 3.dp, y = 2.dp)
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(StatusError)
+                                                .border(1.5.dp, dockContainerColor, CircleShape)
+                                        )
+                                    }
+                                }
+                            }
+                            else -> {
+                                Icon(
+                                    imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                                    contentDescription = null,
+                                    tint = if (isSelected) activeIconColor else inactiveIconColor,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -397,15 +440,15 @@ fun MoontirServiceCard(
         else -> Icons.Outlined.DarkMode
     }
 
-    val iconTint = if (isEmergency) Color(0xFFEF4444) else colors.brand
-    val iconBg = if (isEmergency) Color(0xFFEF4444).copy(alpha = 0.15f) else colors.surfaceSecondary
+    val iconTint = if (isEmergency) SubtleEmergencyRed else colors.brand
+    val iconBg = if (isEmergency) SubtleEmergencyRed.copy(alpha = 0.12f) else colors.surfaceSecondary
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = colors.surfaceTertiary,
         border = androidx.compose.foundation.BorderStroke(
             if (isSelected) 1.5.dp else 1.dp,
-            if (isSelected) (if (isEmergency) Color(0xFFEF4444) else colors.brand) else colors.border
+            if (isSelected) colors.brand else colors.border
         ),
         modifier = modifier
             .fillMaxWidth()
@@ -434,7 +477,7 @@ fun MoontirServiceCard(
                 if (isEmergency) {
                     Text(
                         text = if (isIndonesian) "BANTUAN 24/7 DARURAT" else "24/7 EMERGENCY ASSIST",
-                        color = Color(0xFFEF4444),
+                        color = colors.moonGlow,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.sp
@@ -469,7 +512,7 @@ fun MoontirServiceCard(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "$dur · ${formatRupiah(service.price)}",
-                    color = if (isEmergency) Color(0xFFF87171) else colors.moonGlow,
+                    color = colors.moonGlow,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -479,17 +522,14 @@ fun MoontirServiceCard(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(
-                        if (isSelected) (if (isEmergency) Color(0xFFEF4444) else colors.brand)
-                        else colors.surfaceSecondary
-                    )
+                    .background(if (isSelected) colors.brand else colors.surfaceSecondary)
                     .clickable { onBookClick() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (isSelected) Icons.Default.Check else Icons.Default.Add,
                     contentDescription = null,
-                    tint = if (isSelected) (if (isEmergency) Color.White else colors.onBrand) else colors.onSurface,
+                    tint = if (isSelected) colors.onBrand else colors.onSurface,
                     modifier = Modifier.size(18.dp)
                 )
             }

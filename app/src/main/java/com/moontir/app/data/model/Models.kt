@@ -108,6 +108,8 @@ data class Order(
     val items: List<InvoiceItem> = emptyList(),
     val total: Long,
     @SerializedName("payment_status") val paymentStatus: String,
+    @SerializedName("payment_method") val paymentMethod: String? = "pay_after_service",
+    @SerializedName("payment_reference") val paymentReference: String? = null,
     @SerializedName("created_at") val createdAt: String,
     val rating: Rating? = null
 )
@@ -118,7 +120,10 @@ data class OrderCreate(
     val address: Address,
     @SerializedName("schedule_date") val scheduleDate: String,
     @SerializedName("schedule_time") val scheduleTime: String,
-    val notes: String = ""
+    val notes: String = "",
+    @SerializedName("payment_method") val paymentMethod: String = "pay_after_service",
+    @SerializedName("payment_status") val paymentStatus: String = "unpaid",
+    @SerializedName("payment_reference") val paymentReference: String? = null
 )
 
 data class Quote(
@@ -140,4 +145,11 @@ data class GeocodeResult(
     val latitude: Double,
     val longitude: Double,
     @SerializedName("osmId") val osmId: Long? = null
+)
+
+data class SavedCard(
+    val cardNumber: String = "",
+    val cardHolder: String = "",
+    val expiry: String = "",
+    val cvv: String = ""
 )

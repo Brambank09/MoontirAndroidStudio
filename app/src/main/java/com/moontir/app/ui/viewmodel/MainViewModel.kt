@@ -1,9 +1,12 @@
+// stateflow
 package com.moontir.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.moontir.app.MoontirApplication
 import com.moontir.app.data.model.*
+import com.moontir.app.ui.screens.formatCardExpiry
+import com.moontir.app.ui.screens.formatCardNumber
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +22,7 @@ class MainViewModel : ViewModel() {
     val themeMode: StateFlow<String> = sessionManager.themeFlow
     val baseUrl: StateFlow<String> = sessionManager.baseUrlFlow
     val isMockMode: StateFlow<Boolean> = sessionManager.isMockModeFlow
+    val savedCard: StateFlow<SavedCard?> = sessionManager.savedCardFlow
 
     private val _services = MutableStateFlow<List<Service>>(emptyList())
     val services: StateFlow<List<Service>> = _services.asStateFlow()
@@ -79,14 +83,30 @@ class MainViewModel : ViewModel() {
         _toastMessage.value = if (next == "id") "Bahasa diganti ke Bahasa Indonesia" else "Language switched to English"
     }
 
+    fun setThemeMode(mode: String) {
+        val valid = when (mode) {
+            "auto", "system", "dark", "light" -> mode
+            else -> "system"
+        }
+        sessionManager.setTheme(valid)
+        val isId = language.value == "id"
+        val label = when (valid) {
+            "auto" -> if (isId) "Auto (Sensor Cahaya)" else "Auto (Light Sensor)"
+            "dark" -> if (isId) "Gelap" else "Dark"
+            "light" -> if (isId) "Terang" else "Light"
+            else -> if (isId) "Sistem" else "System"
+        }
+        _toastMessage.value = if (isId) "Tema: $label" else "Theme: $label"
+    }
+
     fun cycleTheme() {
         val next = when (themeMode.value) {
-            "system" -> "dark"
+            "system" -> "auto"
+            "auto" -> "dark"
             "dark" -> "light"
             else -> "system"
         }
-        sessionManager.setTheme(next)
-        _toastMessage.value = "Theme: ${next.replaceFirstChar { it.uppercase() }}"
+        setThemeMode(next)
     }
 
     fun updateBaseUrl(newUrl: String) {
@@ -193,6 +213,24 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun savePaymentCard(cardNumber: String, cardHolder: String, expiry: String, cvv: String) {
+        val card = SavedCard(
+            cardNumber = formatCardNumber(cardNumber),
+            cardHolder = cardHolder.trim(),
+            expiry = formatCardExpiry(expiry),
+            cvv = cvv.filter { it.isDigit() }.take(4)
+        )
+        sessionManager.saveCard(card)
+        val isId = language.value == "id"
+        _toastMessage.value = if (isId) "Identitas kartu disimpan" else "Debit/credit card saved"
+    }
+
+    fun clearPaymentCard() {
+        sessionManager.clearSavedCard()
+        val isId = language.value == "id"
+        _toastMessage.value = if (isId) "Kartu tersimpan dihapus" else "Saved card removed"
+    }
+
     fun saveVehicle(
         nickname: String,
         make: String,
@@ -257,6 +295,9 @@ class MainViewModel : ViewModel() {
         date: String,
         time: String,
         notes: String,
+        paymentMethod: String = "pay_after_service",
+        paymentStatus: String = "unpaid",
+        paymentReference: String? = null,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
@@ -268,13 +309,23 @@ class MainViewModel : ViewModel() {
                 address = address,
                 scheduleDate = date,
                 scheduleTime = time,
-                notes = notes
+                notes = notes,
+                paymentMethod = paymentMethod,
+                paymentStatus = paymentStatus,
+                paymentReference = paymentReference
             )
             repository.createOrder(orderCreate).onSuccess { created ->
                 _orders.value = listOf(created) + _orders.value
                 isBookingOpen.value = false
                 _currentScreen.value = "orders"
-                _toastMessage.value = "Dispatch confirmed! Specialist preparing."
+                val isId = language.value == "id"
+                _toastMessage.value = if (paymentStatus == "paid") {
+                    if (isId) "Pembayaran berhasil! Dispatch dikonfirmasi."
+                    else "Payment successful! Dispatch confirmed."
+                } else {
+                    if (isId) "Dispatch dikonfirmasi! Teknisi sedang bersiap."
+                    else "Dispatch confirmed! Specialist preparing."
+                }
                 onSuccess()
             }.onFailure {
                 _errorMessage.value = it.message ?: "Could not confirm order"
@@ -382,7 +433,7 @@ class MainViewModel : ViewModel() {
                 id = "car_check",
                 group = "car_service",
                 name = "Essential Car Checkup",
-                nameId = "Pemeriksaan Mobil Esensial",
+                nameId = "Pemeriksaan Mobil Menyeluruh",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "Comprehensive 35-point safety inspection covering brakes, suspension, belts, and engine vitals.",
@@ -412,7 +463,7 @@ class MainViewModel : ViewModel() {
                 id = "fluid_refresh",
                 group = "car_service",
                 name = "Full Fluid Refresh",
-                nameId = "Segarkan Semua Fluida",
+                nameId = "Ganti Semua Oli dan Cairan",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "Drain, flush, and refill coolant, brake fluid, transmission fluid check, and windshield washer.",
@@ -457,14 +508,14 @@ class MainViewModel : ViewModel() {
                 id = "ac_refresh",
                 group = "car_service",
                 name = "Air Conditioner Refresh",
-                nameId = "Segarkan AC Mobil",
+                nameId = "Refresh AC Mobil",
                 category = "Car Service",
                 categoryId = "Servis Mobil",
                 description = "AC cabin ozone sterilization, evaporator foam cleaning, cabin filter renewal, and refrigerant pressure test.",
                 descriptionId = "Sterilisasi ozon kabin, busa pembersih evaporator, pembersihan filter kabin, dan tes freon.",
                 duration = "60 minutes",
                 durationId = "60 menit",
-                price = 280000,
+                price = 300000,
                 featured = false,
                 features = listOf("Evaporator foam wash", "Freon pressure check", "Cabin ozone mist", "Blower fan clean")
             ),
@@ -504,7 +555,7 @@ class MainViewModel : ViewModel() {
                 id = "glass",
                 group = "detail",
                 name = "Crystal Glass Coating",
-                nameId = "Lapisan Kaca Kristal",
+                nameId = "Pelapis Kaca Kristal",
                 category = "Car Detailing",
                 categoryId = "Detailing Mobil",
                 description = "Hydrophobic glass coating on all windshields and windows for clarity and safety in heavy rain.",

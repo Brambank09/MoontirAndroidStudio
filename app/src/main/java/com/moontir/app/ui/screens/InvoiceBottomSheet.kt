@@ -236,13 +236,31 @@ fun InvoiceBottomSheet(
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = strings.unpaid,
-                        color = colors.muted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
+                    val methodLabel = when (order.paymentMethod) {
+                        "card" -> strings.cardPayment
+                        "qris" -> strings.qrisPayment
+                        else -> strings.payAfterService
+                    }
+                    val isPaid = order.paymentStatus.equals("paid", ignoreCase = true)
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = if (isPaid) "$methodLabel · ${strings.paidStatus}" else methodLabel,
+                            color = if (isPaid) colors.success else colors.muted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (!order.paymentReference.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${strings.paymentRef}: ${order.paymentReference}",
+                                color = colors.muted,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
                 }
             }
         }
